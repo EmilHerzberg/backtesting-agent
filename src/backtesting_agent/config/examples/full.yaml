@@ -1,0 +1,70 @@
+# Full backtest: 20 diversified symbols, all strategies, walk-forward validation
+# Usage: python -m src.backend.backtesting.cli --config src/backend/backtesting/config/examples/full.yaml
+
+assets:
+  symbols:
+    - AAPL
+    - MSFT
+    - GOOGL
+    - AMZN
+    - TSLA
+    - META
+    - NVDA
+    - JPM
+    - V
+    - JNJ
+    - WMT
+    - PG
+    - MA
+    - UNH
+    - HD
+    - DIS
+    - BAC
+    - XOM
+    - NFLX
+    - ADBE
+  asset_type: STOCK
+
+time:
+  lookback: "5y"
+  interval: "1d"
+
+strategy:
+  names:
+    - SMACrossover
+    - RSIMeanReversion
+    - BollingerBreakout
+    - MACDSignalCross
+    - MultiIndicator
+  use_generator: false
+
+costs:
+  commission_pct: 0.001
+  spread_bps: 5.0
+  slippage_bps: 2.0
+
+optuna:
+  n_trials: 500
+  sampler: tpe
+  pruner: median
+  objective: composite
+  composite_weights:
+    sharpe: 0.6
+    max_drawdown: -0.4
+
+walk_forward:
+  enabled: true
+  train_size: "12m"
+  test_size: "3m"
+  step: "3m"
+  validation_threshold: 0.0
+
+output:
+  save_results: true
+  db_path: "data/backtesting.db"
+  plots: true
+  plot_dir: "data/plots"
+  export_csv: true
+
+cash: 10000.0
+n_workers: 0

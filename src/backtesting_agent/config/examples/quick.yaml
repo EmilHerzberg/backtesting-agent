@@ -1,0 +1,43 @@
+# Quick backtest: single symbol, single strategy, fast optimization
+# Usage: python -m src.backend.backtesting.cli --config src/backend/backtesting/config/examples/quick.yaml
+
+assets:
+  symbols:
+    - AAPL
+  asset_type: STOCK
+
+time:
+  lookback: "1y"
+  interval: "1d"
+
+strategy:
+  names:
+    - SMACrossover
+  use_generator: false
+
+costs:
+  commission_pct: 0.001
+  spread_bps: 5.0
+  slippage_bps: 2.0
+
+optuna:
+  n_trials: 50
+  sampler: tpe
+  pruner: median
+  objective: composite
+  composite_weights:
+    sharpe: 0.6
+    max_drawdown: -0.4
+
+walk_forward:
+  enabled: false
+
+output:
+  save_results: true
+  db_path: "data/backtesting.db"
+  plots: true
+  plot_dir: "data/plots"
+  export_csv: false
+
+cash: 10000.0
+n_workers: 0

@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "backtesting-agent"
+version = "0.0.1"
+description = "An AI agent that stress-tests trading strategies — walk-forward, Optuna, deterministic snapshots, 9 data providers."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Emil Herzberg" }]
+keywords = ["backtesting", "trading", "quant", "optuna", "walk-forward"]
+
+dependencies = [
+    "backtesting>=0.3.3",
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "pyarrow>=15",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.19",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "pyyaml>=6.0",
+    "optuna>=3.5",
+    "openai>=1.0",
+    "yfinance>=0.2.40",
+    "requests>=2.31",
+    "httpx>=0.26",
+]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
+viz = ["plotly>=5.18", "matplotlib>=3.8"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "ruff>=0.3",
+    "mypy>=1.8",
+]
+
+[project.scripts]
+backtest = "backtesting_agent.cli:main"
+
+[project.urls]
+Repository = "https://github.com/EmilHerzberg/backtesting-agent"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
