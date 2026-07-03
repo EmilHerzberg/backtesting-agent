@@ -1,0 +1,248 @@
+"""Top-level entry point: START -> RESULT.
+
+One function call runs the entire autonomous research pipeline.
+No LLM required — works out of the box with yfinance data.
+
+Usage:
+    import asyncio
+    from src.backend.ai.research.run import run_research
+
+    report = asyncio.run(run_research(
+        goal="momentum strategies for AAPL MSFT",
+        assets=["AAPL", "MSFT"],
+        max_runs=50,
+    ))
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from src.backend.ai.research.budgets import AgentBudgetController
+from src.backend.ai.research.critic import AdversarialCritic
+from src.backend.ai.research.executor import ResearchExecutor
+from src.backend.ai.research.gatekeeper import ResearchGatekeeper
+from src.backend.ai.research.loop import DirectorConfig, RuleBasedOrchestrator, research_loop
+from src.backend.ai.research.report_generator import generate_final_report, llm_narrate_report
+from src.backend.ai.research.reporter import ResearchReport
+from src.backend.ai.research.state import Budget, GoalBrief, ResearchState
+from src.backend.ai.research.strategist import LLMStrategist, RuleBasedStrategist
+from src.backend.backtesting.validation.lineage import LineageTracker
+
+logger = logging.getLogger(__name__)
+
+
+def _default_fetch(security_id: str, start: str, end: str):
+    """Fetch OHLCV data via yfinance (default, free)."""
+    try:
+        import yfinance as yf
+        ticker = yf.Ticker(security_id)
+        df = ticker.history(start=start, end=end)
+        if df.empty:
+            raise ValueError(f"No data for {security_id}")
+        # Ensure standard column names.
+        df = df.rename(columns={"Stock Splits": "Stock_Splits"})
+        for col in ("Open", "High", "Low", "Close", "Volume"):
+            if col not in df.columns:
+                raise ValueError(f"Missing column {col} in {security_id} data")
+        return df[["Open", "High", "Low", "Close", "Volume"]]
+    except ImportError:
+        raise ImportError("yfinance is required for default data fetching. Install: pip install yfinance")
+
+
+class _SimpleDataAgent:
+    """Minimal data agent using yfinance or a custom fetch function."""
+
+    def __init__(self, fetch_fn=None):
+        self._fetch = fetch_fn or _default_fetch
+
+    def prepare(self, security_id: str, window_start: str, window_end: str):
+        return self._fetch(security_id, window_start, window_end)
+
+
+async def run_research(
+    goal: str = "Find profitable trading strategies",
+    assets: list[str] | None = None,
+    *,
+    max_runs: int = 100,
+    max_eur: float = 50.0,
+    max_seconds: int = 3600,
+    target_candidates: int = 3,
+    strategy_families: list[str] | None = None,
+    rigor: str = "standard",
+    seed: int = 42,
+    fetch_fn: Any = None,
+    on_start: Any = None,
+    on_event: Any = None,
+    control: Any = None,
+    enable_oos: bool = False,
+    oos_db_path: str = "oos_lockbox.db",
+    agent_mode: str = "rule_based",   # W0: rule_based | ai_assisted | full_ai
+    provider: str | None = None,      # W0: LLM provider name (registry); None = auto/none
+    model: str | None = None,         # W0: model id; None = provider default
+    mode: str = "robustness",         # P1: robustness | regime
+    window_start: str | None = None,  # P1: regime window start (ignored in robustness)
+    window_end: str | None = None,    # P1: regime window end
+) -> ResearchReport:
+    """Run the full autonomous research pipeline.
+
+    START -> propose -> execute -> gate -> critic -> learn -> RESULT
+
+    Args:
+        goal: Natural language research goal.
+        assets: List of ticker symbols to research.
+        max_runs: Maximum number of backtest runs.
+        max_eur: Maximum cost budget (for LLM calls, not used in rule-based mode).
+        max_seconds: Maximum wall-clock time.
+        target_candidates: Stop when this many validated strategies found.
+        strategy_families: Filter templates by family ("trend_following", "mean_reversion", "multi_factor").
+        seed: Random seed for reproducibility.
+        fetch_fn: Custom data fetch function(security_id, start, end) -> DataFrame.
+        on_start: Callback(state) invoked once with the live ResearchState before the
+            loop starts (lets an observer, e.g. the API run registry, track progress).
+        on_event: Callback(event_type, payload) for progress tracking.
+        enable_oos: Whether to run OOS lockbox evaluation on candidates.
+        oos_db_path: Path to the OOS lockbox database.
+
+    Returns:
+        ResearchReport with validated candidates, trial statistics, and honest assessment.
+    """
+    if assets is None:
+        assets = ["AAPL"]
+
+    if strategy_families is None:
+        strategy_families = ["trend_following", "mean_reversion", "multi_factor"]  # F4
+
+    # F1: Strict rigor forces out-of-sample validation on.
+    if rigor == "strict":
+        enable_oos = True
+
+    # P1: effective backtest window — regime uses the user's window (BOTH bounds required, atomic — M1/S1);
+    # robustness keeps the fixed default and ignores any window.
+    from src.backend.ai.research.strategist import WINDOW_START as _DEF_WS, WINDOW_END as _DEF_WE
+    if mode == "regime":
+        if not (window_start and window_end):
+            raise ValueError("regime mode requires both window_start and window_end")
+        if window_start >= window_end:
+            raise ValueError(f"window_start ({window_start}) must precede window_end ({window_end})")
+        eff_ws, eff_we = window_start, window_end
+        # S3: regime has no *robustness* OOS (post-window is semantically wrong for a regime window) →
+        # disable it; P2's within-regime forward-slice hold-out replaces it (below).
+        enable_oos = False
+    else:
+        eff_ws, eff_we = _DEF_WS, _DEF_WE
+
+    # P2 select-on-train: split the regime window → the strategist + backtest + gates + critic see the
+    # TRAIN slice only (selection never touches the hold-out, Rita/C-1); state keeps the FULL window
+    # (display, decay, hold-out bound). ``None`` → window too short to split → stays UNVALIDATED (P2-5).
+    from src.backend.ai.research.loop import _train_split
+    _split = _train_split(eff_ws, eff_we) if mode == "regime" else None
+    train_ws, train_we = (eff_ws, _split) if _split else (eff_ws, eff_we)
+
+    # ── Build state ───────────────────────────────────────────
+    state = ResearchState(
+        goal=GoalBrief(
+            goal_text=goal,
+            asset_pool=assets,
+            strategy_families=strategy_families,
+            max_runs=max_runs,
+            max_eur=max_eur,
+            max_seconds=max_seconds,
+            target_candidates=target_candidates,
+        ),
+        budget=Budget(
+            max_runs=max_runs,
+            max_eur=max_eur,
+            max_seconds=max_seconds,
+        ),
+    )
+
+    # Expose the live state to observers (e.g. the API run registry) before the loop runs.
+    if on_start is not None:
+        on_start(state)
+
+    # ── W0: provider plumbing + cost ledger (inert until W1; rule_based = no LLM) ──
+    from src.backend.ai.research.agent_llm import TokenLedger, resolve_agent_llm
+    ledger = TokenLedger(budget=state.budget)
+    llm = None
+    if agent_mode != "rule_based":
+        llm = resolve_agent_llm(provider, model)
+        if llm is None:
+            logger.warning("agent_mode=%s requested but no provider resolved → rule_based", agent_mode)
+            agent_mode = "rule_based"
+    state.agent_mode = agent_mode  # effective mode (W0-2: honest about what actually ran)
+    # P2: record the effective provider type for the leakage marker (F-11) — "" for rule_based/no-LLM.
+    state.provider_type = getattr(getattr(llm, "provider", None), "provider_type", "") if llm is not None else ""
+    state.mode = mode
+    state.window_start = eff_ws       # FULL window (display, decay, hold-out bound)
+    state.window_end = eff_we
+    state.train_end = _split or ""    # P2: the split boundary the loop reads for the hold-out ("" = no split)
+    # NOTE: `llm`/`ledger` are not yet handed to any agent — W1 wires the Critic.
+
+    # ── Build agents ──────────────────────────────────────────
+    # Selection path (strategist + its fallback + critic) sees the TRAIN slice (P2-R1: the fallback too,
+    # else an LLM failure silently backtests the full window and the hold-out is no longer unseen).
+    if agent_mode == "full_ai" and llm is not None:
+        strategist = LLMStrategist(
+            llm=llm, ledger=ledger,
+            fallback=RuleBasedStrategist(seed=seed, window_start=train_ws, window_end=train_we),
+            window_start=train_ws, window_end=train_we, mode=mode, goal=goal,
+        )
+    else:
+        strategist = RuleBasedStrategist(seed=seed, window_start=train_ws, window_end=train_we)
+    executor = ResearchExecutor()
+    gatekeeper = ResearchGatekeeper(rigor=rigor, mode=mode)
+    critic = AdversarialCritic(
+        llm=(llm if agent_mode in ("ai_assisted", "full_ai") else None),
+        ledger=ledger,
+        mode=mode, window_start=train_ws, window_end=train_we, goal=goal,
+    )
+    data_agent = _SimpleDataAgent(fetch_fn=fetch_fn)
+    orchestrator = RuleBasedOrchestrator(DirectorConfig(oos_enabled=enable_oos))
+    lineage_tracker = LineageTracker()
+    budget_controller = AgentBudgetController()
+
+    # ── OOS lockbox (optional) ────────────────────────────────
+    lockbox = None
+    if enable_oos:
+        try:
+            from src.backend.backtesting.lockbox.service import OOSLockboxService
+            lockbox = OOSLockboxService(db_path=oos_db_path)
+        except Exception as exc:
+            logger.warning("OOS lockbox unavailable: %s", exc)
+
+    # ── Run the loop ──────────────────────────────────────────
+    logger.info(
+        "Starting research: goal=%r, assets=%s, max_runs=%d, target=%d",
+        goal, assets, max_runs, target_candidates,
+    )
+
+    state = await research_loop(
+        state,
+        strategist=strategist,
+        executor=executor,
+        gatekeeper=gatekeeper,
+        critic=critic,
+        data_agent=data_agent,
+        orchestrator=orchestrator,
+        lockbox=lockbox,
+        lineage_tracker=lineage_tracker,
+        budget_controller=budget_controller,
+        on_event=on_event,
+        control=control,
+    )
+
+    # ── Generate report ───────────────────────────────────────
+    report = generate_final_report(state)
+    if agent_mode in ("ai_assisted", "full_ai") and llm is not None:  # W3/W3B: LLM Reporter (narration)
+        await llm_narrate_report(report, state, llm, ledger)
+
+    logger.info(
+        "Research complete: phase=%s, candidates=%d, trials=%d, oos=%d, agent_mode=%s, run_mode=%s, cost=€%.4f, tokens=%d",
+        state.phase, len(state.candidates), state.total_iterations,
+        len(state.oos_results), agent_mode, mode, ledger.cost_eur,
+        ledger.prompt_tokens + ledger.completion_tokens,
+    )
+
+    return report

@@ -1,0 +1,27 @@
+event_id: corpus_002
+title: "FOMC September 2023 — ambiguous dot plot"
+time_start_utc: 2023-09-20T18:00:00Z
+available_at: 2023-09-20T18:00:00Z
+event_type: FOMC_RATE_DECISION
+description: "Rate hold at 5.25-5.50% but dot plot tilted hawkish with one more hike penciled in for 2023. Markets split on interpretation; volatility elevated post-presser."
+source_urls:
+  - "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20230920.htm"
+category: borderline
+human_confidence: MED
+expected_enrichment:
+  importance_range: [0.60, 0.85]
+  uncertainty_range: [0.40, 0.70]
+  enrichment_confidence_tier: MED
+  factor_impacts:
+    - factor_id: rates
+      direction: UP
+      magnitude_range: [0.20, 0.55]
+      time_horizon: "1D_TO_5D"
+    - factor_id: growth
+      direction: DOWN
+      magnitude_range: [0.10, 0.40]
+      time_horizon: "1D_TO_5D"
+    - factor_id: vol_vix
+      direction: UP
+      magnitude_range: [0.10, 0.35]
+      time_horizon: "1D_TO_5D"

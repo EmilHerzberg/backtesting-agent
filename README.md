@@ -1,54 +1,82 @@
 # Backtesting Agent
 
-An AI agent that stress-tests trading strategies — pulls multi-source market data,
-runs walk-forward validation with realistic costs, optimizes parameters with Optuna,
-and (planned) has an LLM analyst that critiques results and proposes the next experiment.
+An autonomous strategy-research agent: a backtesting engine wrapped in an AI
+research loop that proposes hypotheses, runs robustness/hold-out validation, and
+surfaces only statistically honest candidates. Deployed at
+**backtesting-agent.prismgate.net**.
 
-> **Status:** skeleton only — code is being extracted from a private monorepo in phases.
-> See `EXTRACTION-PLAN.md` for what lands when.
+This is a standalone extraction of the research subsystem from the larger
+AI-Investment platform. It keeps the `src.backend.*` namespace but ships only the
+research keep-set — no live broker/trading, scheduler, or event-context code.
 
-## Planned features
+## What's inside
 
-- **9 data providers** behind one cached, aggregated abstraction (Yahoo, Alpha Vantage,
-  Polygon, Finnhub, Twelve Data, Tiingo, CoinGecko, Alpaca, frozen snapshots)
-- **Deterministic reproducibility** via frozen parquet snapshots (yfinance silently
-  revises historical bars; this solves it)
-- **Walk-forward validation** (expanding / rolling windows, overfitting detection)
-- **Optuna hyperparameter optimization** (composite objectives, pruning, timeouts)
-- **Realistic cost modeling** — commission + spread + slippage
-- **Parallel execution** via `ProcessPoolExecutor`
-- **5 built-in strategies** — SMA cross, RSI mean-reversion, Bollinger breakout, MACD, multi-indicator
-- **Next.js dashboard** — ranking, trial detail with equity / drawdown / monthly heatmap,
-  parameter heatmaps, asset×strategy matrix, batch waterfall (planned Phase 3)
+| Area | Package | Purpose |
+|------|---------|---------|
+| Delivery | `src/backend/api` | FastAPI app + routers (`/api/auth`, `/api/ai`, `/api/research`) |
+| Auth | `src/backend/auth` | JWT auth, account settings, per-user API-key vault (Fernet at rest) |
+| AI | `src/backend/ai` | Provider adapters (9 providers), the research loop, leakage classification |
+| Backtesting | `src/backend/backtesting` | Optuna-optimised engine, strategies, quality/DSR stats |
+| Market data | `src/backend/marketdata` | Yahoo (default) + Alpha Vantage/Alpaca fallbacks |
+| Indicators | `src/backend/indicators` | Technical-indicator library |
+| Kernel | `src/backend/shared`, `src/backend/db` | Config, logging, types, SQLAlchemy base |
+| Frontend | `frontend/` | Next.js 15 dashboard (login, research console, account settings) |
 
-## Repo layout
+### Module boundaries
 
-```
-backtesting-agent/
-├── src/backtesting_agent/
-│   ├── shared/        # BarInterval, slim Settings
-│   ├── db/            # SQLAlchemy Base + PriceCacheDB
-│   ├── marketdata/    # 9-provider abstraction, cache, quality, windowing
-│   ├── engine/        # runner, optimizer, walk_forward, parallel, metrics
-│   ├── indicators/    # trend / momentum / volatility / volume + registry
-│   ├── strategies/    # SMA, RSI, Bollinger, MACD, multi-indicator
-│   ├── costs/         # commission, spread, slippage, sizing
-│   ├── results/       # ResultStore, ResultQuery, RegimeAnalyzer
-│   ├── config/        # YAML schema, presets
-│   └── analysis/      # cost sensitivity
-├── api/               # thin FastAPI for the dashboard demo
-├── frontend/          # Next.js dashboard (12 pages)
-├── data/golden/       # frozen parquet snapshots for deterministic demo runs
-└── tests/
-```
-
-## Quickstart (once Phase 2 lands)
+Enforced by `import-linter` (`.importlinter`, 7 contracts). Blessed direction:
+`ai → backtesting → {marketdata, indicators} → kernel`. The delivery layer
+(`api`) is imported by nobody; `shared`/`db` import no feature module.
 
 ```bash
-pip install -e ".[dev]"
-python run_backtest.py --preset quick
+lint-imports          # requires: pip install import-linter
 ```
 
-## License
+## Local development
 
-MIT.
+### Backend
+
+```bash
+python -m venv .venv && .venv\Scripts\activate      # Windows
+pip install -e ".[dev]"
+
+cp .env.example .env                                 # fill SECRET_KEY, AI_KEY_ENCRYPTION_KEY
+uvicorn src.backend.api.main:app --reload --port 8000
+
+pytest                                               # full suite
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev                                          # http://localhost:3000
+```
+
+## AI providers & data leakage
+
+Users add provider keys in the settings UI (encrypted at rest). Each model is
+classified into one of three leakage states, surfaced in onboarding and settings:
+
+- **✓ mechanism-only** — no evidence of look-ahead recall (e.g. `deepseek-reasoner`).
+  Safest for backtest research.
+- **⚠ leakage risk** — training-rich models whose calibrated recall can
+  contaminate backtest performance (e.g. GPT / Gemini / Claude frontier models).
+- **· unrated** — not yet validated against the leakage protocol.
+
+Only reasoning-capable models are recommended for the research loop.
+
+## Deployment
+
+Production runs three containers (`bt-backend`, `bt-frontend`, `bt-nginx`) under
+the compose project `bt`. `bt-nginx` joins the host's shared `prodnet` network so
+the existing Cloudflare tunnel routes the public hostname to it.
+
+```bash
+cp .env.example .env        # set SECRET_KEY, AI_KEY_ENCRYPTION_KEY, CORS_ORIGINS
+docker compose -p bt -f docker-compose.bt.yml up -d --build
+```
+
+The SQLite database lives in the `bt-backend-data` volume (`/app/data`) and
+survives rebuilds. See `deploy/DEPLOYMENT.md` for host-specific notes.

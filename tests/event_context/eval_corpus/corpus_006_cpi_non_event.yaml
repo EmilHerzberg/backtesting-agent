@@ -1,0 +1,23 @@
+event_id: corpus_006
+title: "BLS revision to prior-month CPI"
+time_start_utc: 2024-02-09T13:00:00Z
+available_at: 2024-02-09T13:00:00Z
+event_type: CPI_RELEASE
+description: "Annual seasonal-factor revisions to recent CPI months. Top-line numbers essentially unchanged. Minimal market reaction."
+source_urls:
+  - "https://www.bls.gov/cpi/notices/2024/2024-cpi-seasonal-adjustment-update.htm"
+category: near_non_event
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.05, 0.20]
+  uncertainty_range: [0.20, 0.50]
+  enrichment_confidence_tier: LOW
+  factor_impacts:
+    - factor_id: inflation
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.10]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.10]
+      time_horizon: "1D_TO_5D"

@@ -1,0 +1,61 @@
+providers:
+  yfinance:
+    supports_delisted: false
+    supports_pit_membership: false
+    supports_corporate_actions: false
+    supports_dividends: false
+    supports_split_adjusted_ohlcv: true
+    supports_total_return_series: false
+    research_conclusion_allowed: false
+    survivorship_bias_risk: true
+    provider_class: prototype_only
+    notes: "Free, no API key. Silently revises history. Use for plumbing only."
+
+  alpha_vantage:
+    supports_delisted: false
+    supports_pit_membership: false
+    supports_corporate_actions: true
+    supports_dividends: true
+    supports_split_adjusted_ohlcv: true
+    supports_total_return_series: false
+    research_conclusion_allowed: false
+    survivorship_bias_risk: true
+    provider_class: partial
+    notes: "Free tier limited. No delisted coverage."
+
+  eodhd:
+    supports_delisted: true
+    supports_pit_membership: true
+    supports_corporate_actions: true
+    supports_dividends: true
+    supports_split_adjusted_ohlcv: true
+    supports_total_return_series: true
+    research_conclusion_allowed: true
+    survivorship_bias_risk: false
+    provider_class: production
+    notes: "Full production-grade provider. Requires paid API key."
+
+  polygon:
+    supports_delisted: true
+    supports_pit_membership: false
+    supports_corporate_actions: true
+    supports_dividends: true
+    supports_split_adjusted_ohlcv: true
+    supports_total_return_series: false
+    research_conclusion_allowed: false
+    survivorship_bias_risk: true
+    provider_class: partial
+    notes: "Good coverage but no PIT membership."
+
+  # Default for unknown providers — conservative flags.
+  _default:
+    supports_delisted: false
+    supports_pit_membership: false
+    supports_corporate_actions: false
+    supports_dividends: false
+    supports_split_adjusted_ohlcv: false
+    supports_total_return_series: false
+    research_conclusion_allowed: false
+    survivorship_bias_risk: true
+    provider_class: unknown
+    notes: "Unknown provider — conservative defaults applied."

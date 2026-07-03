@@ -1,0 +1,31 @@
+event_id: corpus_017
+title: "Iran-Israel direct strike Apr 13 2024 (ChatGPT-mock)"
+time_start_utc: 2024-04-13T20:00:00Z
+available_at: 2024-04-13T20:00:00Z
+event_type: GEOPOLITICAL_SHOCK
+description: "ChatGPT-mock parallel label for corpus_017."
+source_urls:
+  - "https://www.reuters.com/world/middle-east/iran-launches-drone-attack-israel-2024-04-13/"
+category: borderline
+human_confidence: MED
+expected_enrichment:
+  importance_range: [0.55, 0.80]
+  uncertainty_range: [0.50, 0.85]
+  enrichment_confidence_tier: MED
+  factor_impacts:
+    - factor_id: geopolitical_risk
+      direction: UP             # agrees
+      magnitude_range: [0.40, 0.70]
+      time_horizon: "1D_TO_5D"
+    - factor_id: commodities_oil
+      direction: UP             # agrees
+      magnitude_range: [0.15, 0.45]
+      time_horizon: "1D_TO_5D"
+    - factor_id: commodities_gold
+      direction: UP             # agrees
+      magnitude_range: [0.15, 0.40]
+      time_horizon: "1D_TO_5D"
+    - factor_id: vol_vix
+      direction: UP             # agrees
+      magnitude_range: [0.20, 0.50]
+      time_horizon: "1D_TO_5D"

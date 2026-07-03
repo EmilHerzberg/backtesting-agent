@@ -1,0 +1,90 @@
+# Import-Linter contracts for the standalone backtesting-agent (research-only keep-set).
+# Run:  lint-imports        (package: `pip install import-linter`)
+# root_packages MUST be the top-level `src` (grimp rejects sub-packages).
+
+[importlinter]
+root_packages =
+    src
+
+# ── Delivery layer (api) is imported by nobody (api is a pure consumer) ─────────
+[importlinter:contract:delivery-not-imported]
+name = Nobody imports the delivery layer api
+type = forbidden
+source_modules =
+    src.backend.ai
+    src.backend.backtesting
+    src.backend.marketdata
+    src.backend.indicators
+forbidden_modules =
+    src.backend.api
+
+# ── Kernel purity: shared imports no feature/delivery module ───────────────────
+[importlinter:contract:kernel-shared-purity]
+name = shared (kernel) imports no capability/delivery
+type = forbidden
+source_modules =
+    src.backend.shared
+forbidden_modules =
+    src.backend.api
+    src.backend.ai
+    src.backend.backtesting
+    src.backend.marketdata
+    src.backend.indicators
+
+# ── db kernel (base/models/engine) imports no feature module ───────────────────
+[importlinter:contract:kernel-db-independence]
+name = db kernel (base/models/engine) imports no feature module
+type = forbidden
+source_modules =
+    src.backend.db.base
+    src.backend.db.models
+    src.backend.db.engine
+forbidden_modules =
+    src.backend.api
+    src.backend.ai
+    src.backend.backtesting
+    src.backend.marketdata
+    src.backend.indicators
+
+# ── marketdata is a leaf capability (kernel only) ──────────────────────────────
+[importlinter:contract:marketdata-leaf]
+name = marketdata imports only the kernel (leaf capability)
+type = forbidden
+source_modules =
+    src.backend.marketdata
+forbidden_modules =
+    src.backend.api
+    src.backend.ai
+    src.backend.backtesting
+    src.backend.indicators
+
+# ── indicators is a leaf capability (kernel only) ──────────────────────────────
+[importlinter:contract:indicators-leaf]
+name = indicators imports only the kernel (leaf capability)
+type = forbidden
+source_modules =
+    src.backend.indicators
+forbidden_modules =
+    src.backend.api
+    src.backend.ai
+    src.backend.backtesting
+    src.backend.marketdata
+
+# ── backtesting: may use marketdata/indicators; not api/ai ──────────────────────
+[importlinter:contract:backtesting-boundaries]
+name = backtesting does not import api/ai
+type = forbidden
+source_modules =
+    src.backend.backtesting
+forbidden_modules =
+    src.backend.api
+    src.backend.ai
+
+# ── ai (research + agent layer): may use backtesting/marketdata/indicators; not api ─
+[importlinter:contract:airesearch-boundaries]
+name = ai (research) does not import the delivery layer api
+type = forbidden
+source_modules =
+    src.backend.ai
+forbidden_modules =
+    src.backend.api

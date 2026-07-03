@@ -1,0 +1,12 @@
+{
+  "name": "ai-investment-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser-level smoke tests against deployed instances.",
+  "scripts": {
+    "sim-history": "node sim-history.spec.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.59.1"
+  }
+}

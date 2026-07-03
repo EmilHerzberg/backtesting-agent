@@ -1,0 +1,27 @@
+event_id: corpus_008
+title: "US Nonfarm Payrolls March 2024 — mixed signals"
+time_start_utc: 2024-04-05T12:30:00Z
+available_at: 2024-04-05T12:30:00Z
+event_type: NFP_RELEASE
+description: "303k headline jobs (consensus 200k) but average hourly earnings cooled to 4.1% YoY. Unemployment rate 3.8% (down from 3.9%). Hot headline, dovish wage detail."
+source_urls:
+  - "https://www.bls.gov/news.release/archives/empsit_04052024.htm"
+category: borderline
+human_confidence: MED
+expected_enrichment:
+  importance_range: [0.55, 0.80]
+  uncertainty_range: [0.40, 0.70]
+  enrichment_confidence_tier: MED
+  factor_impacts:
+    - factor_id: growth
+      direction: UP
+      magnitude_range: [0.20, 0.50]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: UP
+      magnitude_range: [0.10, 0.40]
+      time_horizon: "1D_TO_5D"
+    - factor_id: inflation
+      direction: NEUTRAL
+      magnitude_range: [0.05, 0.25]
+      time_horizon: "1D_TO_5D"

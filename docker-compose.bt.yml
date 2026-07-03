@@ -1,0 +1,46 @@
+# Backtesting Agent — production compose (project name: bt).
+# Deploy:  docker compose -p bt -f docker-compose.bt.yml up -d --build
+#
+# The bt-nginx service joins the external `prodnet` network so the host's
+# Cloudflare tunnel (from the AI-Investment stack) can route
+# backtesting-agent.prismgate.net -> bt-nginx. `prodnet.name` must match that
+# tunnel's docker network (verify: `docker network ls`).
+services:
+  bt-backend:
+    build: { context: ., dockerfile: deploy/Dockerfile.backend }
+    env_file: .env
+    volumes: [ "bt-backend-data:/app/data" ]
+    expose: [ "8000" ]
+    restart: unless-stopped
+    networks: [ btnet ]
+
+  bt-frontend:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.frontend
+      args:
+        NEXT_PUBLIC_API_URL: https://backtesting-agent.prismgate.net
+    expose: [ "3000" ]
+    depends_on: [ bt-backend ]
+    restart: unless-stopped
+    networks: [ btnet ]
+
+  bt-nginx:
+    image: nginx:alpine
+    volumes: [ "./deploy/nginx.bt.conf:/etc/nginx/conf.d/default.conf:ro" ]
+    depends_on: [ bt-backend, bt-frontend ]
+    restart: unless-stopped
+    networks:
+      btnet: {}
+      prodnet:
+        aliases: [ bt-nginx ]
+
+networks:
+  btnet:
+    driver: bridge
+  prodnet:
+    external: true
+    name: ai-investment_default
+
+volumes:
+  bt-backend-data:

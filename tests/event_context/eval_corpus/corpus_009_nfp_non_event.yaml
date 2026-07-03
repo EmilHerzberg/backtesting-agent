@@ -1,0 +1,23 @@
+event_id: corpus_009
+title: "Regional Fed Beige Book labour anecdote"
+time_start_utc: 2024-03-06T19:00:00Z
+available_at: 2024-03-06T19:00:00Z
+event_type: NFP_RELEASE
+description: "Beige Book release contains qualitative regional labour-market commentary. No quantitative shock; superseded weeks later by NFP."
+source_urls:
+  - "https://www.federalreserve.gov/monetarypolicy/beigebook202403.htm"
+category: near_non_event
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.05, 0.20]
+  uncertainty_range: [0.25, 0.55]
+  enrichment_confidence_tier: LOW
+  factor_impacts:
+    - factor_id: growth
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.10]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.10]
+      time_horizon: "1D_TO_5D"

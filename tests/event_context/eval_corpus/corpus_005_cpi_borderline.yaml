@@ -1,0 +1,27 @@
+event_id: corpus_005
+title: "US CPI March 2024 — slight upside surprise"
+time_start_utc: 2024-04-10T12:30:00Z
+available_at: 2024-04-10T12:30:00Z
+event_type: CPI_RELEASE
+description: "Headline CPI 3.5% YoY vs 3.4% consensus; core 3.8% in-line. Market reaction muted but rates inched higher and cut-pricing pushed out."
+source_urls:
+  - "https://www.bls.gov/news.release/cpi.htm"
+category: borderline
+human_confidence: MED
+expected_enrichment:
+  importance_range: [0.50, 0.75]
+  uncertainty_range: [0.35, 0.65]
+  enrichment_confidence_tier: MED
+  factor_impacts:
+    - factor_id: inflation
+      direction: UP
+      magnitude_range: [0.15, 0.40]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: UP
+      magnitude_range: [0.15, 0.40]
+      time_horizon: "1D_TO_5D"
+    - factor_id: growth
+      direction: NEUTRAL
+      magnitude_range: [0.05, 0.25]
+      time_horizon: "1D_TO_5D"

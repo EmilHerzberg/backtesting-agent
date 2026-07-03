@@ -1,0 +1,27 @@
+event_id: corpus_014
+title: "Jan 2024 yen-spike VIX bump"
+time_start_utc: 2024-01-17T14:00:00Z
+available_at: 2024-01-17T14:00:00Z
+event_type: VIX_SPIKE
+description: "VIX briefly above 16 (vs sub-13 prior week) on USD/JPY surge + China property news. Single-day spike, mean-reverts within 48h."
+source_urls:
+  - "https://www.cboe.com/tradable_products/vix/"
+category: borderline
+human_confidence: MED
+expected_enrichment:
+  importance_range: [0.40, 0.65]
+  uncertainty_range: [0.40, 0.70]
+  enrichment_confidence_tier: MED
+  factor_impacts:
+    - factor_id: vol_vix
+      direction: UP
+      magnitude_range: [0.20, 0.50]
+      time_horizon: "1D_TO_5D"
+    - factor_id: usd
+      direction: UP
+      magnitude_range: [0.15, 0.40]
+      time_horizon: "1D_TO_5D"
+    - factor_id: tech_momentum
+      direction: DOWN
+      magnitude_range: [0.10, 0.35]
+      time_horizon: "1D_TO_5D"

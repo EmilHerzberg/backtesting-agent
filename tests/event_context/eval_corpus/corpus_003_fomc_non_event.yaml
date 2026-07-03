@@ -1,0 +1,23 @@
+event_id: corpus_003
+title: "Regular FOMC voting member speech on outlook"
+time_start_utc: 2024-02-12T14:00:00Z
+available_at: 2024-02-12T14:00:00Z
+event_type: FOMC_RATE_DECISION
+description: "Mid-month speech by non-chair FOMC voting member reiterating data dependence. No new policy signal."
+source_urls:
+  - "https://www.federalreserve.gov/newsevents/speech/"
+category: near_non_event
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.05, 0.25]
+  uncertainty_range: [0.30, 0.60]
+  enrichment_confidence_tier: LOW
+  factor_impacts:
+    - factor_id: rates
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.15]
+      time_horizon: "1D_TO_5D"
+    - factor_id: growth
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.10]
+      time_horizon: "1D_TO_5D"

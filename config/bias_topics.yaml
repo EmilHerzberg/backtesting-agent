@@ -1,0 +1,49 @@
+# Trigger-Keywords fuer das China-Bias-Gate Stufe 1 (ATS-1603 / EVENT-CTX-A2)
+#
+# Wenn eines dieser Keywords in event.title oder event.description vorkommt
+# (substring, case-insensitive), wird Stufe 2 (LLM-Confirmer) aktiviert.
+# Sonst laeuft die Pipeline mit dem DeepSeek-Default-Provider.
+#
+# Format: jede Zeile kann mit "|" alternative Begriffe enthalten.
+# Diese Liste ist konservativ — lieber zu oft Stufe 2 triggern (kostet Cents)
+# als einen China-Bias-relevanten Event mit DeepSeek bewerten zu lassen.
+
+keywords:
+  # Politik / Geographie
+  - china | chinese | prc | mainland china
+  - taiwan | taiwanese | roc | taipei
+  - hong kong | hongkong | hk
+  - xinjiang | uyghur | uighur | re-education camp
+  - tibet | tibetan
+  - tiananmen
+  - macau | macao
+
+  # Personen / Institutionen
+  - xi jinping | president xi
+  - ccp | communist party of china | chinese communist party
+  - pla | people's liberation army
+  - politburo
+  - mss | ministry of state security
+
+  # Wirtschaft / Tech (hochsensibel)
+  - tsmc | smic | yangtze memory | ymtc
+  - huawei | bytedance | tiktok | tencent | alibaba | baidu
+  - belt and road | bri
+  - chip ban | chip export | chip embargo | semiconductor sanctions
+  - export controls | entity list
+  - de-risking | decoupling
+
+  # Konflikte / Geopolitik
+  - south china sea | scs
+  - cross-strait | strait of taiwan | taiwan strait
+  - senkaku | diaoyu
+  - line of actual control | lac
+  - india-china | sino-indian
+
+  # Pandemic / Forschung
+  - covid origin | wuhan lab | lab leak
+
+  # Handelskrieg-Topics
+  - us-china trade | china tariff | china tariffs | china sanctions
+  - section 301 | section 232
+  - tariff retaliation | trade war

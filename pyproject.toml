@@ -1,62 +1,64 @@
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "backtesting-agent"
-version = "0.0.1"
-description = "An AI agent that stress-tests trading strategies — walk-forward, Optuna, deterministic snapshots, 9 data providers."
-readme = "README.md"
+version = "1.0.0"
+description = "Autonomous strategy-research agent (backtesting engine + AI research loop)"
 requires-python = ">=3.11"
-license = { text = "MIT" }
-authors = [{ name = "Emil Herzberg" }]
-keywords = ["backtesting", "trading", "quant", "optuna", "walk-forward"]
-
 dependencies = [
-    "backtesting>=0.3.3",
-    "pandas>=2.1",
-    "numpy>=1.26",
-    "pyarrow>=15",
-    "sqlalchemy[asyncio]>=2.0",
-    "aiosqlite>=0.19",
-    "pydantic>=2.5",
-    "pydantic-settings>=2.1",
-    "pyyaml>=6.0",
-    "optuna>=3.5",
+    "fastapi>=0.111",
+    "uvicorn[standard]",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "sqlalchemy>=2.0",
+    "aiosqlite",
+    "httpx",
+    "ib_async",
+    "yfinance",
+    "apscheduler>=3.10,<4",
+    "alpha-vantage",
     "openai>=1.0",
-    "yfinance>=0.2.40",
-    "requests>=2.31",
-    "httpx>=0.26",
+    "anthropic",  # account-settings Phase 2: Claude provider (Messages API adapter)
+    "python-jose[cryptography]",
+    "cryptography",  # account-settings: Fernet encryption-at-rest for AI keys
+    "bcrypt",
+    "python-multipart",
+    "numpy",
+    "pandas",
+    "optuna",
+    "plotly",
+    "backtesting",
+    "alpaca-py",           # marketdata fallback provider (lazy-imported)
+    "PyYAML>=6.0",
+    # Backtesting factor/quality math (Ridge exposures, DSR/quality stats)
+    "scikit-learn>=1.3",
+    "scipy>=1.10",
 ]
 
 [project.optional-dependencies]
-api = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
-viz = ["plotly>=5.18", "matplotlib>=3.8"]
 dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-    "pytest-cov>=4.1",
-    "ruff>=0.3",
-    "mypy>=1.8",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "import-linter",  # Modularisation: enforces module-boundary contracts (.importlinter)
 ]
-
-[project.scripts]
-backtest = "backtesting_agent.cli:main"
-
-[project.urls]
-Repository = "https://github.com/EmilHerzberg/backtesting-agent"
-
-[tool.setuptools.packages.find]
-where = ["src"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "perf: performance budget tests (Sprint I) — run with `pytest -m perf`",
+    "determinism: backtest determinism checks (ATS-2004) — requires golden snapshot, run with `pytest -m determinism`",
+    "slow: slow integration tests (e.g. ATS-2030 full pipeline) — run with `pytest -m slow`",
+]
 
 [tool.ruff]
-line-length = 100
 target-version = "py311"
 
-[tool.mypy]
-python_version = "3.11"
-strict = true
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "tests*"]

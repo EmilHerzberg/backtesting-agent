@@ -1,0 +1,31 @@
+event_id: corpus_013
+title: "VIX spike Aug 5 2024 — yen-carry unwind"
+time_start_utc: 2024-08-05T13:30:00Z
+available_at: 2024-08-05T13:30:00Z
+event_type: VIX_SPIKE
+description: "VIX intraday >65 (highest since COVID March 2020). Yen-carry-trade unwind after BOJ hike + weak US NFP triggered global de-risking. Nikkei -12% prior session."
+source_urls:
+  - "https://www.cboe.com/tradable_products/vix/"
+category: clear_case
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.85, 1.0]
+  uncertainty_range: [0.30, 0.65]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: vol_vix
+      direction: UP
+      magnitude_range: [0.80, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: tech_momentum
+      direction: DOWN
+      magnitude_range: [0.50, 0.85]
+      time_horizon: "1D_TO_5D"
+    - factor_id: defensive
+      direction: UP
+      magnitude_range: [0.30, 0.65]
+      time_horizon: "1D_TO_5D"
+    - factor_id: credit_spreads
+      direction: UP
+      magnitude_range: [0.35, 0.70]
+      time_horizon: "1D_TO_5D"

@@ -1,0 +1,27 @@
+event_id: corpus_005
+title: "US CPI March 2024 — slight upside surprise (ChatGPT-mock)"
+time_start_utc: 2024-04-10T12:30:00Z
+available_at: 2024-04-10T12:30:00Z
+event_type: CPI_RELEASE
+description: "ChatGPT-mock parallel label for corpus_005."
+source_urls:
+  - "https://www.bls.gov/news.release/cpi.htm"
+category: borderline
+human_confidence: MED
+expected_enrichment:
+  importance_range: [0.50, 0.75]
+  uncertainty_range: [0.35, 0.65]
+  enrichment_confidence_tier: MED
+  factor_impacts:
+    - factor_id: inflation
+      direction: UP             # agrees
+      magnitude_range: [0.15, 0.40]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: UP             # agrees
+      magnitude_range: [0.15, 0.40]
+      time_horizon: "1D_TO_5D"
+    - factor_id: growth
+      direction: DOWN           # human said NEUTRAL -> DISAGREE
+      magnitude_range: [0.10, 0.30]
+      time_horizon: "1D_TO_5D"

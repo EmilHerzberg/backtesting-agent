@@ -1,0 +1,42 @@
+# Event-Context-System Domain-Taxonomie (ATS-1602 / EVENT-CTX-A1)
+#
+# Statische Hierarchie. NIE durch KI veraendert. Wenn neue Domains gebraucht
+# werden: hier manuell ergaenzen, deployen.
+#
+# Format:
+#   <top_domain>:
+#     - <sub_domain_id>
+#
+# Verwendung: event_types.domain == "<top>.<sub>" (z.B. "politics.geopolitics").
+
+politics:
+  - geopolitics       # war, sanctions, summits, treaties, diplomacy
+  - elections         # election shocks, government collapse, referenda
+  - regulation        # export bans, antitrust, tariffs, new laws
+
+economy:
+  - monetary_policy   # FED/ECB/BoE/BoJ rate decisions, QE/QT, FX intervention
+  - inflation         # CPI, core CPI, PCE, PPI, inflation expectations
+  - labor             # NFP, unemployment rate, jobless claims, JOLTS
+  - growth            # GDP, retail sales, industrial production, factory orders
+  - trade             # trade balance, current account, imports, exports
+
+markets:
+  - banking           # banking crises, bank runs, FDIC takeovers, contagion
+  - commodities       # energy supply shocks, OPEC, agricultural disruption
+  - crypto            # exchange collapses, regulation announcements, hard forks
+  - liquidity         # flash crashes, market halts, circuit breakers
+
+corporate:
+  - earnings          # corporate earnings reports, guidance revisions
+  - m_and_a           # acquisitions, mergers, IPOs, buyouts
+  - product           # product launches, recalls, breakthroughs
+
+natural:
+  - disaster          # earthquakes, hurricanes, floods, wildfires
+  - pandemic          # disease outbreaks, vaccine breakthroughs, lockdowns
+  - climate           # heat waves, droughts, polar vortex events
+
+technology:
+  - breakthrough      # AI capability jumps, chip breakthroughs, new fab nodes
+  - outage            # cloud outages, infrastructure failures, cyber attacks

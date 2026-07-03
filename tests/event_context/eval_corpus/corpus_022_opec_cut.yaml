@@ -1,0 +1,35 @@
+event_id: corpus_022
+title: "OPEC+ surprise 2 mbd production cut Oct 5 2022"
+time_start_utc: 2022-10-05T13:00:00Z
+available_at: 2022-10-05T13:00:00Z
+event_type: OPEC_DECISION
+description: "OPEC+ announces 2 million barrels/day production cut, double consensus. Brent +5% to $93, US-Saudi tensions escalate. Reignited inflation-hedge bid in commodities space."
+source_urls:
+  - "https://www.opec.org/opec_web/en/press_room/7185.htm"
+category: big_surprise
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.82, 1.0]
+  uncertainty_range: [0.40, 0.75]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: commodities_oil
+      direction: UP
+      magnitude_range: [0.65, 0.95]
+      time_horizon: "1D_TO_5D"
+    - factor_id: inflation
+      direction: UP
+      magnitude_range: [0.30, 0.65]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: UP
+      magnitude_range: [0.20, 0.55]
+      time_horizon: "1D_TO_5D"
+    - factor_id: geopolitical_risk
+      direction: UP
+      magnitude_range: [0.30, 0.60]
+      time_horizon: "1D_TO_5D"
+    - factor_id: usd
+      direction: UP
+      magnitude_range: [0.15, 0.45]
+      time_horizon: "1D_TO_5D"

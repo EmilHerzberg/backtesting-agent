@@ -1,0 +1,27 @@
+event_id: corpus_001
+title: "FOMC March 2024 Statement"
+time_start_utc: 2024-03-20T18:00:00Z
+available_at: 2024-03-20T18:00:00Z
+event_type: FOMC_RATE_DECISION
+description: "Federal Open Market Committee meeting. Rate hold at 5.25-5.50% widely expected and delivered as anticipated. Dot plot reaffirmed three cuts for 2024."
+source_urls:
+  - "https://www.federalreserve.gov/monetarypolicy/fomcpresconf20240320.htm"
+category: clear_case
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.85, 1.0]
+  uncertainty_range: [0.10, 0.40]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: rates
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.30]
+      time_horizon: "1D_TO_5D"
+    - factor_id: growth
+      direction: UP
+      magnitude_range: [0.10, 0.35]
+      time_horizon: "1D_TO_5D"
+    - factor_id: usd
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.25]
+      time_horizon: "1D_TO_5D"

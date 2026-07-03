@@ -1,0 +1,31 @@
+event_id: corpus_010
+title: "NVDA Q2 FY2024 earnings — massive AI beat"
+time_start_utc: 2023-08-23T20:20:00Z
+available_at: 2023-08-23T20:20:00Z
+event_type: EARNINGS_RELEASE
+description: "NVIDIA reports $13.51B revenue (consensus $11.2B), $2.70 EPS adj. Guides Q3 $16B (vs $12.6B). Datacenter revenue $10.32B, 171% YoY. Catalyst for AI-trade re-acceleration."
+source_urls:
+  - "https://nvidianews.nvidia.com/news/nvidia-announces-financial-results-for-second-quarter-fiscal-2024"
+category: clear_case
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.85, 1.0]
+  uncertainty_range: [0.15, 0.40]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: tech_momentum
+      direction: UP
+      magnitude_range: [0.70, 0.95]
+      time_horizon: "1D_TO_5D"
+    - factor_id: growth
+      direction: UP
+      magnitude_range: [0.30, 0.60]
+      time_horizon: "1D_TO_5D"
+    - factor_id: cyclicals
+      direction: UP
+      magnitude_range: [0.20, 0.50]
+      time_horizon: "1D_TO_5D"
+    - factor_id: defensive
+      direction: DOWN
+      magnitude_range: [0.15, 0.40]
+      time_horizon: "1D_TO_5D"

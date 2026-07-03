@@ -1,0 +1,31 @@
+event_id: corpus_010
+title: "NVDA Q2 FY2024 earnings — massive AI beat (ChatGPT-mock)"
+time_start_utc: 2023-08-23T20:20:00Z
+available_at: 2023-08-23T20:20:00Z
+event_type: EARNINGS_RELEASE
+description: "ChatGPT-mock parallel label for corpus_010."
+source_urls:
+  - "https://nvidianews.nvidia.com/news/nvidia-announces-financial-results-for-second-quarter-fiscal-2024"
+category: clear_case
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.85, 1.0]
+  uncertainty_range: [0.15, 0.40]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: tech_momentum
+      direction: UP             # agrees
+      magnitude_range: [0.70, 0.95]
+      time_horizon: "1D_TO_5D"
+    - factor_id: growth
+      direction: UP             # agrees
+      magnitude_range: [0.25, 0.55]
+      time_horizon: "1D_TO_5D"
+    - factor_id: cyclicals
+      direction: UP             # agrees
+      magnitude_range: [0.15, 0.45]
+      time_horizon: "1D_TO_5D"
+    - factor_id: defensive
+      direction: DOWN           # agrees
+      magnitude_range: [0.10, 0.35]
+      time_horizon: "1D_TO_5D"

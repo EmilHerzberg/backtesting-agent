@@ -1,0 +1,31 @@
+event_id: corpus_007
+title: "US Nonfarm Payrolls May 2020 — -20.5M crash"
+time_start_utc: 2020-05-08T12:30:00Z
+available_at: 2020-05-08T12:30:00Z
+event_type: NFP_RELEASE
+description: "April 2020 NFP report shows -20.5M jobs lost (consensus -22M). Unemployment rate spiked to 14.7%. Largest single-month employment shock in modern history."
+source_urls:
+  - "https://www.bls.gov/news.release/archives/empsit_05082020.htm"
+category: clear_case
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.85, 1.0]
+  uncertainty_range: [0.30, 0.70]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: growth
+      direction: DOWN
+      magnitude_range: [0.70, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: DOWN
+      magnitude_range: [0.50, 0.90]
+      time_horizon: "1D_TO_5D"
+    - factor_id: vol_vix
+      direction: UP
+      magnitude_range: [0.50, 0.95]
+      time_horizon: "1D_TO_5D"
+    - factor_id: cyclicals
+      direction: DOWN
+      magnitude_range: [0.55, 0.95]
+      time_horizon: "1D_TO_5D"

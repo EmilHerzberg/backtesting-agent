@@ -1,0 +1,23 @@
+event_id: corpus_018
+title: "Routine UN Security Council monthly meeting"
+time_start_utc: 2024-05-15T15:00:00Z
+available_at: 2024-05-15T15:00:00Z
+event_type: GEOPOLITICAL_SHOCK
+description: "Standing UN Security Council meeting on protection of civilians in armed conflict. No new resolution, no veto, no market-relevant outcome."
+source_urls:
+  - "https://www.un.org/securitycouncil/"
+category: near_non_event
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.02, 0.15]
+  uncertainty_range: [0.15, 0.40]
+  enrichment_confidence_tier: LOW
+  factor_impacts:
+    - factor_id: geopolitical_risk
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.08]
+      time_horizon: "1D_TO_5D"
+    - factor_id: commodities_oil
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.05]
+      time_horizon: "1D_TO_5D"

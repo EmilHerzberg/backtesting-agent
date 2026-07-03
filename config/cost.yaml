@@ -1,0 +1,5 @@
+# Cost-Cap-Konfiguration fuer das Event-Context-System (ATS-1610)
+# Default: EUR 20 pro Backfill-Run.
+
+cap_eur: 20.0
+per_run: true   # true = Cap reset pro new_run(), false = Lifetime-Cap

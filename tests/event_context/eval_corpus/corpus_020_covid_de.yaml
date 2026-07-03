@@ -1,0 +1,39 @@
+event_id: corpus_020
+title: "Germany announces COVID lockdown Mar 22 2020"
+time_start_utc: 2020-03-22T17:00:00Z
+available_at: 2020-03-22T17:00:00Z
+event_type: GEOPOLITICAL_SHOCK
+description: "Merkel announces nationwide contact restrictions; DE joins broader European shutdown. DAX already -38% YTD into event. Bund yields hit record lows, Eurostoxx Banks below GFC trough."
+source_urls:
+  - "https://www.bundesregierung.de/breg-de/aktuelles/regeln-zum-corona-virus-1730536"
+category: big_surprise
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.92, 1.0]
+  uncertainty_range: [0.65, 0.95]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: growth
+      direction: DOWN
+      magnitude_range: [0.80, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: vol_vix
+      direction: UP
+      magnitude_range: [0.70, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: DOWN
+      magnitude_range: [0.45, 0.80]
+      time_horizon: "1D_TO_5D"
+    - factor_id: commodities_oil
+      direction: DOWN
+      magnitude_range: [0.60, 0.95]
+      time_horizon: "1D_TO_5D"
+    - factor_id: defensive
+      direction: UP
+      magnitude_range: [0.30, 0.65]
+      time_horizon: "1D_TO_5D"
+    - factor_id: cyclicals
+      direction: DOWN
+      magnitude_range: [0.70, 1.0]
+      time_horizon: "1D_TO_5D"

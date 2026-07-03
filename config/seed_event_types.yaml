@@ -1,0 +1,313 @@
+# Seed-Katalog ~20 verifizierter Event-Types (ATS-1612 / EVENT-CTX-A11)
+#
+# Kuratiert per Hand. Wird von src/backend/event_context/seed_loader.py
+# in die DB geschrieben (Status: verified_type, created_by: human).
+#
+# Format pro Type:
+#   id: snake_case identifier
+#   name: human-readable
+#   description: 1-2 sentences
+#   domain: top.sub from config/domains.yaml
+#   spec:
+#     defining_traits: was den Typ ausmacht
+#     typical_affected_sectors: list
+#     typical_affected_asset_classes: list (us_stocks, eu_stocks, fx_majors, crypto, energy, treasuries, ...)
+#     typical_duration: point | hours | days | weeks | ongoing
+#     impact_profile:
+#       pre_event: typische Marktreaktion vor Event (oder null)
+#       acute: Reaktion in den ersten Stunden/Tagen
+#       ongoing: laengerfristige Auswirkungen (oder null)
+#     related_types: list of type ids this often co-occurs with
+
+types:
+  # ─── Monetary policy (4 types) ─────────────────────────────────────
+  - id: fed_rate_decision
+    name: FED Rate Decision (FOMC)
+    description: Federal Reserve interest rate decision and FOMC statement.
+    domain: economy.monetary_policy
+    spec:
+      defining_traits: scheduled FOMC meeting with policy rate announcement plus statement and press conference
+      typical_affected_sectors: [banking, real_estate, tech, utilities]
+      typical_affected_asset_classes: [us_stocks, treasuries, fx_majors, crypto, gold]
+      typical_duration: point
+      impact_profile:
+        pre_event: volatility compression, spread widening, position de-risking
+        acute: large initial move on rate decision then often partial reversal post press conference
+        ongoing: sets tone for rate-sensitive trades for ~weeks
+      related_types: [cpi_release, nfp_release]
+
+  - id: ecb_rate_decision
+    name: ECB Rate Decision
+    description: European Central Bank policy rate announcement and Lagarde press conference.
+    domain: economy.monetary_policy
+    spec:
+      defining_traits: scheduled ECB Governing Council policy decision
+      typical_affected_sectors: [banking, real_estate, exporters]
+      typical_affected_asset_classes: [eu_stocks, eur_pairs, european_bonds]
+      typical_duration: point
+      impact_profile:
+        pre_event: EUR pairs compress
+        acute: EUR pairs spike, Bunds move, DAX/EuroStoxx repricing
+        ongoing: sets ECB rate-path expectations for ~weeks
+      related_types: [fed_rate_decision]
+
+  - id: boj_rate_decision
+    name: Bank of Japan Rate Decision
+    description: BoJ Monetary Policy Statement.
+    domain: economy.monetary_policy
+    spec:
+      defining_traits: scheduled BoJ policy meeting
+      typical_affected_sectors: [exporters, banking]
+      typical_affected_asset_classes: [jpy_pairs, japanese_stocks, jgb]
+      typical_duration: point
+      impact_profile:
+        pre_event: JPY ranges
+        acute: JPY-pair spikes (USDJPY especially), Nikkei moves
+        ongoing: yen carry-trade implications for weeks
+      related_types: []
+
+  - id: boe_rate_decision
+    name: Bank of England Rate Decision
+    description: BoE Monetary Policy Committee rate vote and statement.
+    domain: economy.monetary_policy
+    spec:
+      defining_traits: scheduled MPC meeting
+      typical_affected_sectors: [banking, housing]
+      typical_affected_asset_classes: [gbp_pairs, ftse, gilts]
+      typical_duration: point
+      impact_profile:
+        pre_event: GBP pairs compress
+        acute: GBP move, gilt yield repricing
+        ongoing: weeks of follow-through
+      related_types: []
+
+  # ─── Inflation (3 types) ───────────────────────────────────────────
+  - id: cpi_release
+    name: CPI Release
+    description: Consumer Price Index release. Critical inflation gauge.
+    domain: economy.inflation
+    spec:
+      defining_traits: scheduled monthly headline + core CPI release
+      typical_affected_sectors: [tech, real_estate, banking, retail]
+      typical_affected_asset_classes: [us_stocks, treasuries, fx_majors, crypto, gold]
+      typical_duration: point
+      impact_profile:
+        pre_event: spread widening, volatility compression
+        acute: very large initial move within minutes; often partial mean-reversion in 1-2 hours
+        ongoing: shifts FED rate-cut expectations for weeks
+      related_types: [pce_release, fed_rate_decision]
+
+  - id: pce_release
+    name: PCE Price Index Release
+    description: Personal Consumption Expenditures price index. FED's preferred inflation gauge.
+    domain: economy.inflation
+    spec:
+      defining_traits: scheduled monthly PCE release; core PCE most watched
+      typical_affected_sectors: [tech, real_estate]
+      typical_affected_asset_classes: [us_stocks, treasuries, fx_majors]
+      typical_duration: point
+      impact_profile:
+        pre_event: position trimming
+        acute: moderate move usually less violent than CPI since often pre-positioned
+        ongoing: feeds FED expectations
+      related_types: [cpi_release, fed_rate_decision]
+
+  - id: ppi_release
+    name: PPI Release
+    description: Producer Price Index release. Leading indicator for CPI.
+    domain: economy.inflation
+    spec:
+      defining_traits: scheduled monthly PPI release
+      typical_affected_sectors: [industrials, materials]
+      typical_affected_asset_classes: [us_stocks, treasuries]
+      typical_duration: point
+      impact_profile:
+        pre_event: muted
+        acute: smaller reaction than CPI but can preview CPI direction
+        ongoing: medium-term inflation outlook
+      related_types: [cpi_release]
+
+  # ─── Labor (2 types) ──────────────────────────────────────────────
+  - id: nfp_release
+    name: Non-Farm Payrolls Release
+    description: Monthly US employment report. Headline jobs + unemployment + wages.
+    domain: economy.labor
+    spec:
+      defining_traits: scheduled monthly BLS employment situation report (first Friday usually)
+      typical_affected_sectors: [retail, banking, real_estate]
+      typical_affected_asset_classes: [us_stocks, treasuries, fx_majors]
+      typical_duration: point
+      impact_profile:
+        pre_event: range-bound trading the day before, volatility compression
+        acute: violent first 30-60 min move; often reverses partially
+        ongoing: shapes 'soft landing vs hard landing' narrative
+      related_types: [unemployment_rate_release, fed_rate_decision]
+
+  - id: unemployment_rate_release
+    name: Unemployment Rate Release
+    description: Component of NFP report; standalone watched closely as recession indicator.
+    domain: economy.labor
+    spec:
+      defining_traits: monthly unemployment rate published with NFP
+      typical_affected_sectors: [retail, banking]
+      typical_affected_asset_classes: [us_stocks, treasuries]
+      typical_duration: point
+      impact_profile:
+        pre_event: muted standalone
+        acute: amplifies NFP reaction; sahm-rule trigger watched
+        ongoing: recession-probability inputs
+      related_types: [nfp_release]
+
+  # ─── Growth (1 type) ──────────────────────────────────────────────
+  - id: gdp_release
+    name: GDP Release
+    description: Gross Domestic Product quarterly release (advance / second / third estimate).
+    domain: economy.growth
+    spec:
+      defining_traits: quarterly BEA GDP release in 3 estimate revisions
+      typical_affected_sectors: [industrials, financials, consumer_discretionary]
+      typical_affected_asset_classes: [us_stocks, treasuries, fx_majors]
+      typical_duration: point
+      impact_profile:
+        pre_event: position trimming
+        acute: moderate move on advance estimate, smaller on revisions
+        ongoing: macro-narrative input for weeks
+      related_types: []
+
+  # ─── Geopolitics (4 types) ────────────────────────────────────────
+  - id: war
+    name: War / Military Conflict
+    description: Armed conflict between states or major escalation in ongoing conflict.
+    domain: politics.geopolitics
+    spec:
+      defining_traits: armed conflict outbreak or major escalation; involves casualties and force movements
+      typical_affected_sectors: [defense, energy, semiconductors, agri]
+      typical_affected_asset_classes: [defense_stocks, energy_stocks, gold, treasuries, oil_futures, crypto]
+      typical_duration: ongoing
+      impact_profile:
+        pre_event: gradual tension build-up; safe-haven flows
+        acute: broad risk-off; defense + energy rally; broad equity sell-off; oil spike
+        ongoing: changes long-term geopolitical risk premium; sectoral repricing
+      related_types: [sanctions_imposed, energy_supply_shock, terror_attack]
+
+  - id: sanctions_imposed
+    name: Sanctions Imposed
+    description: Country or institution imposes economic / financial sanctions.
+    domain: politics.geopolitics
+    spec:
+      defining_traits: government announcement of sanctions, asset freezes, or trade restrictions
+      typical_affected_sectors: [banking, energy, technology]
+      typical_affected_asset_classes: [eu_stocks, fx_majors, energy, crypto]
+      typical_duration: ongoing
+      impact_profile:
+        pre_event: leak-driven moves
+        acute: targeted sector sell-off; FX moves on currency targets
+        ongoing: structural supply-chain repricing
+      related_types: [war, export_ban_announced]
+
+  - id: terror_attack
+    name: Terror Attack
+    description: Mass-casualty terror incident or major attack on critical infrastructure.
+    domain: politics.geopolitics
+    spec:
+      defining_traits: confirmed mass-casualty incident or major infrastructure attack
+      typical_affected_sectors: [airlines, hospitality, defense, insurance]
+      typical_affected_asset_classes: [us_stocks, eu_stocks, gold, treasuries]
+      typical_duration: hours
+      impact_profile:
+        pre_event: null
+        acute: airlines + hospitality drop; defense + gold rise; broad risk-off
+        ongoing: usually fades within days unless new attacks follow
+      related_types: [war]
+
+  - id: election_shock
+    name: Election Shock
+    description: Surprise electoral outcome or government collapse.
+    domain: politics.elections
+    spec:
+      defining_traits: result departing materially from polling consensus
+      typical_affected_sectors: [banking, energy, utilities]
+      typical_affected_asset_classes: [country_stocks, country_currency, sovereign_bonds]
+      typical_duration: weeks
+      impact_profile:
+        pre_event: polling spread compression
+        acute: large currency move; equity gap; sovereign spread widening
+        ongoing: policy uncertainty premium for months
+      related_types: []
+
+  # ─── Markets (3 types) ────────────────────────────────────────────
+  - id: banking_crisis
+    name: Banking Crisis
+    description: Bank run, FDIC takeover, or systemic-bank stress event.
+    domain: markets.banking
+    spec:
+      defining_traits: bank failure or near-failure with deposit-flight signs
+      typical_affected_sectors: [banking, real_estate, finance]
+      typical_affected_asset_classes: [bank_stocks, regional_bank_etf, treasuries, gold, crypto]
+      typical_duration: days
+      impact_profile:
+        pre_event: weak earnings + deposit flight signals
+        acute: regional banks crash; flight to treasuries; gold up; crypto often paradoxically up (banking-system distrust)
+        ongoing: tightens credit conditions for weeks-months
+      related_types: [central_bank_emergency, fed_rate_decision]
+
+  - id: central_bank_emergency
+    name: Central Bank Emergency Intervention
+    description: Off-cycle rate cut, emergency liquidity facility, or intervention.
+    domain: economy.monetary_policy
+    spec:
+      defining_traits: unscheduled action by central bank in response to crisis
+      typical_affected_sectors: [banking, broad market]
+      typical_affected_asset_classes: [us_stocks, treasuries, fx_majors, gold]
+      typical_duration: point
+      impact_profile:
+        pre_event: high volatility, stress signals
+        acute: relief rally usually, with caveats around the underlying problem
+        ongoing: signals serious underlying issue
+      related_types: [banking_crisis, war]
+
+  - id: opec_meeting
+    name: OPEC / OPEC+ Meeting
+    description: OPEC production decision or surprise output change.
+    domain: markets.commodities
+    spec:
+      defining_traits: scheduled or surprise OPEC announcement on output
+      typical_affected_sectors: [energy, transport, airlines]
+      typical_affected_asset_classes: [oil_futures, energy_stocks, energy_etf, fx_oil_currencies]
+      typical_duration: point
+      impact_profile:
+        pre_event: leak-driven oil moves
+        acute: oil spikes on cuts, drops on hikes
+        ongoing: months of output-policy implications
+      related_types: [energy_supply_shock]
+
+  # ─── Corporate (2 types) ──────────────────────────────────────────
+  - id: corporate_earnings
+    name: Corporate Earnings Release
+    description: Quarterly earnings report from public company.
+    domain: corporate.earnings
+    spec:
+      defining_traits: scheduled quarterly earnings release with revenue/EPS/guidance
+      typical_affected_sectors: [single_stock, sector_peers]
+      typical_affected_asset_classes: [single_stock, sector_etf]
+      typical_duration: hours
+      impact_profile:
+        pre_event: implied volatility ramp (options pricing in)
+        acute: large stock-specific move on print + guidance; sector contagion if mega-cap
+        ongoing: 1-2 days of follow-through, then fades unless guidance was structurally surprising
+      related_types: []
+
+  - id: m_and_a_announcement
+    name: M&A Announcement
+    description: Acquisition, merger, or buyout announcement.
+    domain: corporate.m_and_a
+    spec:
+      defining_traits: announced acquisition or merger
+      typical_affected_sectors: [single_stock, sector_peers]
+      typical_affected_asset_classes: [single_stock, sector_etf]
+      typical_duration: point
+      impact_profile:
+        pre_event: leak-driven gap usually
+        acute: target stock jumps to deal price; acquirer often falls; competitors move
+        ongoing: sector repricing; antitrust risk premium
+      related_types: []

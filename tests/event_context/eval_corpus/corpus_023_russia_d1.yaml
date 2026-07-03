@@ -1,0 +1,43 @@
+event_id: corpus_023
+title: "Russia invasion day-1 market open Feb 24 2022"
+time_start_utc: 2022-02-24T08:00:00Z
+available_at: 2022-02-24T08:00:00Z
+event_type: GEOPOLITICAL_SHOCK
+description: "European cash open following overnight invasion announcement. DAX -5%, Brent +8% to $105, gas TTF +50%, gold +3%. RTS halted. Massive vol-of-vol spike, dealer gamma hedging dominates intraday tape."
+source_urls:
+  - "https://www.reuters.com/business/finance/global-markets-wrapup-1-pix-2022-02-24/"
+category: big_surprise
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.92, 1.0]
+  uncertainty_range: [0.60, 0.95]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: geopolitical_risk
+      direction: UP
+      magnitude_range: [0.85, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: commodities_oil
+      direction: UP
+      magnitude_range: [0.70, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: commodities_gold
+      direction: UP
+      magnitude_range: [0.50, 0.85]
+      time_horizon: "1D_TO_5D"
+    - factor_id: vol_vix
+      direction: UP
+      magnitude_range: [0.70, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: cyclicals
+      direction: DOWN
+      magnitude_range: [0.55, 0.90]
+      time_horizon: "1D_TO_5D"
+    - factor_id: defensive
+      direction: UP
+      magnitude_range: [0.30, 0.65]
+      time_horizon: "1D_TO_5D"
+    - factor_id: inflation
+      direction: UP
+      magnitude_range: [0.30, 0.65]
+      time_horizon: "1D_TO_5D"

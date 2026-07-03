@@ -1,0 +1,35 @@
+event_id: corpus_016
+title: "Ukraine invasion Feb 24 2022 — full-scale start"
+time_start_utc: 2022-02-24T03:00:00Z
+available_at: 2022-02-24T03:00:00Z
+event_type: GEOPOLITICAL_SHOCK
+description: "Russia launches full-scale invasion of Ukraine. Brent crude +8% to $100, gold +3%, DAX -5%. SWIFT cutoff discussions begin within 48h."
+source_urls:
+  - "https://www.reuters.com/world/europe/russia-launches-attack-ukraine-2022-02-24/"
+category: clear_case
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.90, 1.0]
+  uncertainty_range: [0.40, 0.80]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: geopolitical_risk
+      direction: UP
+      magnitude_range: [0.85, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: commodities_oil
+      direction: UP
+      magnitude_range: [0.60, 0.90]
+      time_horizon: "1D_TO_5D"
+    - factor_id: commodities_gold
+      direction: UP
+      magnitude_range: [0.40, 0.75]
+      time_horizon: "1D_TO_5D"
+    - factor_id: vol_vix
+      direction: UP
+      magnitude_range: [0.55, 0.90]
+      time_horizon: "1D_TO_5D"
+    - factor_id: cyclicals
+      direction: DOWN
+      magnitude_range: [0.40, 0.75]
+      time_horizon: "1D_TO_5D"

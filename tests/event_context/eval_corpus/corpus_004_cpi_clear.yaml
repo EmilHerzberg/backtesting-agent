@@ -1,0 +1,31 @@
+event_id: corpus_004
+title: "US CPI June 2022 — 9.1% YoY peak"
+time_start_utc: 2022-07-13T12:30:00Z
+available_at: 2022-07-13T12:30:00Z
+event_type: CPI_RELEASE
+description: "US headline CPI prints 9.1% YoY (consensus 8.8%), highest since November 1981. Core also above expectations. Triggered repricing of Fed hike path to 75-100bps."
+source_urls:
+  - "https://www.bls.gov/news.release/archives/cpi_07132022.htm"
+category: clear_case
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.85, 1.0]
+  uncertainty_range: [0.15, 0.45]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: inflation
+      direction: UP
+      magnitude_range: [0.60, 0.95]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: UP
+      magnitude_range: [0.55, 0.90]
+      time_horizon: "1D_TO_5D"
+    - factor_id: growth
+      direction: DOWN
+      magnitude_range: [0.30, 0.65]
+      time_horizon: "1D_TO_5D"
+    - factor_id: usd
+      direction: UP
+      magnitude_range: [0.20, 0.55]
+      time_horizon: "1D_TO_5D"

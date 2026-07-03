@@ -1,0 +1,23 @@
+event_id: corpus_012
+title: "Small-cap microbrewery quarterly miss"
+time_start_utc: 2024-03-14T21:00:00Z
+available_at: 2024-03-14T21:00:00Z
+event_type: EARNINGS_RELEASE
+description: "Sub-$500M market-cap craft beverage company misses by 3 cents. No index-level relevance, marginal sector read-through."
+source_urls:
+  - "https://example-sec-filings.example.com/8K-2024-03-14"
+category: near_non_event
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.02, 0.15]
+  uncertainty_range: [0.20, 0.55]
+  enrichment_confidence_tier: LOW
+  factor_impacts:
+    - factor_id: cyclicals
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.10]
+      time_horizon: "1D_TO_5D"
+    - factor_id: tech_momentum
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.05]
+      time_horizon: "1D_TO_5D"

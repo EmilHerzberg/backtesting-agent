@@ -1,0 +1,23 @@
+event_id: corpus_015
+title: "Typical sub-20 VIX day"
+time_start_utc: 2024-05-22T20:15:00Z
+available_at: 2024-05-22T20:15:00Z
+event_type: VIX_SPIKE
+description: "Mid-week close VIX at 12.3, third-lowest reading of the year. No meaningful tail-risk signal."
+source_urls:
+  - "https://www.cboe.com/tradable_products/vix/"
+category: near_non_event
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.02, 0.15]
+  uncertainty_range: [0.10, 0.40]
+  enrichment_confidence_tier: LOW
+  factor_impacts:
+    - factor_id: vol_vix
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.10]
+      time_horizon: "1D_TO_5D"
+    - factor_id: tech_momentum
+      direction: NEUTRAL
+      magnitude_range: [0.00, 0.10]
+      time_horizon: "1D_TO_5D"

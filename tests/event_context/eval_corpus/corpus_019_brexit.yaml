@@ -1,0 +1,39 @@
+event_id: corpus_019
+title: "Brexit referendum result Jun 24 2016"
+time_start_utc: 2016-06-24T03:30:00Z
+available_at: 2016-06-24T03:30:00Z
+event_type: GEOPOLITICAL_SHOCK
+description: "UK votes to leave EU 52-48. GBP/USD -10% to lowest since 1985. FTSE -8.7% open, banks -25%. Cameron resigns. Largest single-day FX move in modern history for a major currency."
+source_urls:
+  - "https://www.bbc.co.uk/news/politics/eu_referendum/results"
+category: big_surprise
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.92, 1.0]
+  uncertainty_range: [0.55, 0.90]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: geopolitical_risk
+      direction: UP
+      magnitude_range: [0.75, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: usd
+      direction: UP
+      magnitude_range: [0.55, 0.90]
+      time_horizon: "1D_TO_5D"
+    - factor_id: vol_vix
+      direction: UP
+      magnitude_range: [0.70, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: commodities_gold
+      direction: UP
+      magnitude_range: [0.45, 0.80]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: DOWN
+      magnitude_range: [0.40, 0.75]
+      time_horizon: "1D_TO_5D"
+    - factor_id: cyclicals
+      direction: DOWN
+      magnitude_range: [0.60, 0.95]
+      time_horizon: "1D_TO_5D"

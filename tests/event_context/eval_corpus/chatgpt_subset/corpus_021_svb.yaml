@@ -1,0 +1,39 @@
+event_id: corpus_021
+title: "Silicon Valley Bank failure Mar 10 2023 (ChatGPT-mock)"
+time_start_utc: 2023-03-10T16:00:00Z
+available_at: 2023-03-10T16:00:00Z
+event_type: BANK_FAILURE
+description: "ChatGPT-mock parallel label for corpus_021."
+source_urls:
+  - "https://www.fdic.gov/news/press-releases/2023/pr23016.html"
+category: big_surprise
+human_confidence: HIGH
+expected_enrichment:
+  importance_range: [0.90, 1.0]
+  uncertainty_range: [0.55, 0.90]
+  enrichment_confidence_tier: HIGH
+  factor_impacts:
+    - factor_id: credit_spreads
+      direction: UP             # agrees
+      magnitude_range: [0.70, 1.0]
+      time_horizon: "1D_TO_5D"
+    - factor_id: rates
+      direction: DOWN           # agrees
+      magnitude_range: [0.55, 0.90]
+      time_horizon: "1D_TO_5D"
+    - factor_id: vol_vix
+      direction: UP             # agrees
+      magnitude_range: [0.50, 0.85]
+      time_horizon: "1D_TO_5D"
+    - factor_id: commodities_gold
+      direction: UP             # agrees
+      magnitude_range: [0.30, 0.65]
+      time_horizon: "1D_TO_5D"
+    - factor_id: cyclicals
+      direction: NEUTRAL        # human said DOWN -> DISAGREE
+      magnitude_range: [0.20, 0.50]
+      time_horizon: "1D_TO_5D"
+    - factor_id: defensive
+      direction: UP             # agrees
+      magnitude_range: [0.25, 0.60]
+      time_horizon: "1D_TO_5D"
