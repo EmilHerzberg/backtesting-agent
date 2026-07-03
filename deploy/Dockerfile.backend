@@ -14,6 +14,8 @@ RUN pip install --no-cache-dir -e ".[dev]" 2>/dev/null || pip install --no-cache
 # App code
 COPY src/ ./src/
 COPY tests/ ./tests/
+# Runtime config (provider capability/bias flags — loaded by backtesting.registry.capabilities)
+COPY config/ ./config/
 
 # Data directory
 RUN mkdir -p /app/data
