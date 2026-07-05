@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **24 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50 · 2A-lockbox: H3/H14/H15/H16/H17) + L17, L22. **✅ All 3 criticals fixed. Phase 1 COMPLETE + adversarially reviewed. Phase 2 IN PROGRESS (OOS lockbox done; H18/D6 next).**
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **25 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50 · 2A: H3/H14/H15/H16/H17/H18) + L17, L22. **✅ All 3 criticals fixed. Phase 1 COMPLETE + adversarially reviewed. Phase 2 IN PROGRESS: cluster 2A (OOS/hold-out contract) COMPLETE; 2B/2C next.**
 
 > **Phase 1 review (2026-07-05, `PHASE1-REVIEW-2026-07-05.md`):** a 9-reviewer adversarial audit found 12 real issues (0 crit, 7 high) — 5 behavioral defects where a fix didn't reach the production path + 7 test-integrity gaps. **All 12 fixed** in commit "Phase 1 review fixes": M4 shipped on the CLI/YAML default; the C3 default-goal Sharpe-floor regression removed; win_rate/profit_factor goals now enforced (not skipped); the generator warm-up mask made effective; the reslice put on the geometric Sharpe scale; and the DSR-loop / reslice-value / generator / M5·L17 / H30 / M24 tests added. Suite 635 pass.
 
@@ -83,7 +83,7 @@
 | H15 | High | mech | DONE | `test_oos_lockbox_2a.py` | OOS window_end = live `_env_bounds()[1]`, not the "2025-12-31" literal |
 | H16 | High | mech | DONE | `test_oos_lockbox_2a.py` | added `OOSLockboxService.get_result`; loop recovers prior verdict instead of re-raising |
 | H17 | High | mech | DONE | `test_oos_lockbox_2a.py` | added `OOSOutcome.UNEVALUATED`; exception/thin sample spends no budget, writes no row, retryable |
-| H18 | High | spec | OPEN | | Hold-out reused/ranked → multiplicity control (D6) — next |
+| H18 | High | spec | DONE | `test_regime_holdout.py` | D6: `_sidak_t_star(k)` — hold-out bar Šidák-corrected for its reuse count (per asset+slice); thin peeks don't count |
 
 ### Cluster 2B — Default OOS
 | ID | Sev | Bucket | Status | Test | Note |

@@ -373,11 +373,27 @@ def _compute_regime_decay(spec, in_regime_sharpe, data_agent, executor, window_s
     }
 
 
-def _run_regime_holdout(spec, data_agent, executor, train_end, window_end) -> dict:
+def _sidak_t_star(k: int) -> float:
+    """H18/D6 — validation t* corrected for reusing the SAME hold-out across k surfaced ideas.
+
+    The regime hold-out is peeked at once per surfaced candidate; held at a fixed 1.65 bar the
+    family-wise false-validation rate inflates (~64% over 20 independent peeks). Šidák keeps it near
+    the intended 5%: per-test ``α_k = 1-(1-0.05)^(1/k)`` and ``t* = Φ⁻¹(1-α_k)``. Clamped to never
+    fall below the single-test bar VALIDATE_T, so reuse only ever TIGHTENS the bar (k=1 ⇒ VALIDATE_T,
+    more peeks ⇒ a higher t*)."""
+    from statistics import NormalDist
+    k = max(1, int(k))
+    alpha_k = 1.0 - (1.0 - 0.05) ** (1.0 / k)
+    return max(VALIDATE_T, float(NormalDist().inv_cdf(1.0 - alpha_k)))
+
+
+def _run_regime_holdout(spec, data_agent, executor, train_end, window_end, *,
+                        t_star: float = VALIDATE_T) -> dict:
     """P2 — within-regime forward-slice validation. Select-on-train: the idea was surfaced on the
     train slice; here we test whether the edge PERSISTS on the unseen final hold-out. A pass earns
     ``regime_validated``; a collapse ``regime_failed``; a too-thin slice stays ``unvalidated``
-    (unvalidatable, not a failure). Uses a DEDICATED stricter bar (P2-R4), NOT the selection rigor.
+    (unvalidatable, not a failure). Uses a DEDICATED stricter bar (P2-R4), NOT the selection rigor;
+    ``t_star`` may be raised above VALIDATE_T by the caller to correct for hold-out reuse (H18/D6).
     Local backtest (no LLM). Never raises into the loop."""
     if not train_end or _days(train_end, window_end) < MIN_HOLD_DAYS:
         return {"status": "unvalidated", "reason": "no usable hold-out slice"}
@@ -394,10 +410,10 @@ def _run_regime_holdout(spec, data_agent, executor, train_end, window_end) -> di
                 "holdout_period": [train_end, window_end], "holdout_trades": n}
     from src.backend.backtesting.gates.basic_gates import per_trade_t
     t = per_trade_t(tr)                          # shared helper — same math as the activity gate
-    passed = t >= VALIDATE_T                      # positive + significant at the validation bar
+    passed = t >= t_star                          # positive + significant at the (reuse-corrected) bar
     return {"status": "regime_validated" if passed else "regime_failed",
             "holdout_period": [train_end, window_end], "holdout_trades": n,
-            "holdout_t": round(float(t), 3), "t_star": VALIDATE_T,
+            "holdout_t": round(float(t), 3), "t_star": round(float(t_star), 3),
             "holdout_sharpe": round(float(m.get("sharpe_annual", 0.0)), 3)}
 
 
@@ -889,8 +905,17 @@ async def research_loop(
                         spec, sharpe, data_agent, executor, state.window_start, state.window_end)
                     # P2: within-regime forward-slice hold-out — upgrades UNVALIDATED → regime_validated
                     # where earned (select-on-train; runs BEFORE the cap, inline on every surfaced idea, F-7).
+                    # H18/D6: the hold-out is reused on every surfaced idea against the SAME slice, so the
+                    # bar is Šidák-corrected for that peek count — validating on a much-reused hold-out gets
+                    # progressively harder. Only an actual test (not a too-thin slice) consumes a peek.
+                    _ho_key = f"{state.current_asset}|{getattr(state, 'train_end', '')}|{state.window_end}"
+                    _ho_prior = state.holdout_eval_counts.get(_ho_key, 0)
                     _hold = _run_regime_holdout(
-                        spec, data_agent, executor, getattr(state, "train_end", ""), state.window_end)
+                        spec, data_agent, executor, getattr(state, "train_end", ""), state.window_end,
+                        t_star=_sidak_t_star(_ho_prior + 1))
+                    if _hold["status"] in ("regime_validated", "regime_failed"):  # a real test ran
+                        state.holdout_eval_counts[_ho_key] = _ho_prior + 1
+                        _hold["holdout_peek_index"] = _ho_prior + 1
                     candidate.holdout = _hold
                     candidate.validation_status = _hold["status"]     # overrides the "unvalidated" default
                     if _hold["status"] == "regime_failed":            # F-5: floored + a weakness
