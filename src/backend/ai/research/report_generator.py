@@ -189,10 +189,14 @@ def generate_final_report(state: ResearchState) -> ResearchReport:
     # ── OOS Status ─────────────────────────────────────────────
     oos_passed = sum(1 for r in state.oos_results if r.outcome == "PASS")
     oos_failed = sum(1 for r in state.oos_results if r.outcome == "FAIL")
+    # UNEVALUATED (thin sample / data outage — H17) is NOT a terminal verdict: it is not counted as
+    # "evaluated", so the pass/fail denominator stays honest.
+    oos_unevaluated = sum(1 for r in state.oos_results if r.outcome == "UNEVALUATED")
     report.oos_status.numeric_fields = {
-        "oos_evaluated": len(state.oos_results),
+        "oos_evaluated": oos_passed + oos_failed,
         "oos_passed": oos_passed,
         "oos_failed": oos_failed,
+        "oos_unevaluated": oos_unevaluated,
     }
     report.oos_status.narrative = (
         "Out-of-sample evaluation provides the final test. "

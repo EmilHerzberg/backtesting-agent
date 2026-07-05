@@ -58,12 +58,18 @@ class SpecValidationGate(Gate):
 
 
 class ProviderCapabilityGate(Gate):
-    """Gate 2: Block research conclusions on biased/prototype data."""
+    """Gate 2: Flag research conclusions built on biased/prototype data.
+
+    H24: a SOFT gate — survivorship-biased free providers (the default yfinance included) are
+    usable for exploration, so this surfaces the risk as a weakness rather than hard-blocking every
+    default run. The FAIL is recorded (and caps the "research conclusion" claim downstream) but does
+    not short-circuit the pipeline. Callers that want a hard block can raise the severity.
+    """
 
     gate_id = "provider_capability"
-    gate_version = 1
+    gate_version = 2
     cost_rank = 2
-    severity = GateSeverity.HARD
+    severity = GateSeverity.SOFT
 
     def check(self, ctx: GateContext) -> GateResult:
         flags = ctx.bias_flags
@@ -72,7 +78,7 @@ class ProviderCapabilityGate(Gate):
 
         if flags.get("survivorship_bias", False):
             return self._fail(
-                reason="data has survivorship bias risk",
+                reason="data has survivorship bias risk — not a research-grade conclusion",
                 research_conclusion_allowed=flags.get("research_conclusion_allowed", False),
             )
         return self._pass()
@@ -240,9 +246,12 @@ class BenchmarkRelativeGate(Gate):
             and return_sacrifice < self.RETURN_SACRIFICE_MAX
         ) if bh_dd != 0 else False
 
-        # Path C: Positive alpha (simplified — full regression in separate gate)
+        # Path C: risk-aware excess return (M19). Positive raw excess ALONE is vacuous — a strategy
+        # that beats buy-and-hold on return while taking a WORSE risk-adjusted profile (lower Sharpe)
+        # is not real outperformance. Require positive excess AND no Sharpe degradation vs the
+        # benchmark, so the `benchmark_sharpe_min` (Path A) knob can still bind for the top tier.
         excess_return = strategy_return - bh_return
-        path_c = excess_return > 0
+        path_c = excess_return > 0 and sharpe_improvement >= 0
 
         if path_a or path_b or path_c:
             return self._pass(

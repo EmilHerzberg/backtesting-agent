@@ -1,24 +1,30 @@
-"""ATS-1746/1749 — Leakage test suite: reference strategies vs canary gate.
+"""ATS-1746/1749 + H8/M22 — Leakage test suite: reference strategies vs the canary gate.
 
-CI regression guard: if this test breaks, a refactor introduced look-ahead.
+CI regression guard: if this test breaks, a refactor introduced look-ahead. H8: the positive control
+(`LeakyFuturePeek`) genuinely leaks (peeks at the next bar via shift(-1)), so the canary's ability to
+detect leakage is actually exercised — the old `LeakyClosePeek` filled next-open and did not leak, and
+the discrimination test asserted nothing.
 """
 
 from __future__ import annotations
+
+import inspect
 
 import numpy as np
 import pandas as pd
 import pytest
 from backtesting import Backtest
 
+from src.backend.backtesting.gates.canary import LeakageCanaryGate
+from src.backend.backtesting.gates.pipeline import GateContext, GateStatus
 from src.backend.backtesting.strategies.reference.clean_sma import CleanSMACross
-from src.backend.backtesting.strategies.reference.leaky_close_peek import LeakyClosePeek
+from src.backend.backtesting.strategies.reference.leaky_future_peek import LeakyFuturePeek
 
 
 def _make_trending_ohlcv(n=500, seed=42):
     """Create OHLCV data with a mild uptrend for meaningful strategy signals."""
     rng = np.random.default_rng(seed)
     idx = pd.date_range("2018-01-01", periods=n, freq="B")
-    # Mild uptrend with noise.
     returns = rng.normal(0.0003, 0.015, n)
     close = 100 * np.exp(np.cumsum(returns))
     high = close * (1 + np.abs(rng.normal(0, 0.005, n)))
@@ -36,82 +42,69 @@ def _make_trending_ohlcv(n=500, seed=42):
 
 def _run_strategy_returns(strategy_class, data):
     """Run a strategy and extract per-bar returns."""
-    bt = Backtest(data, strategy_class, cash=10000, commission=0.001)
+    bt = Backtest(data, strategy_class, cash=10000, commission=0.001, finalize_trades=True)
     stats = bt.run()
     eq = stats["_equity_curve"]["Equity"]
     returns = eq.pct_change().dropna().values
     return returns, stats
 
 
-class TestLeakyStrategy:
-    def test_leaky_strategy_runs(self):
-        """The leaky strategy should execute without errors."""
-        data = _make_trending_ohlcv()
-        returns, stats = _run_strategy_returns(LeakyClosePeek, data)
-        assert len(returns) > 0
+def _run_fn(strategy_cls):
+    def run(df):
+        r, _ = _run_strategy_returns(strategy_cls, df)
+        return r
+    return run
 
-    def test_leaky_strategy_has_trades(self):
-        """LeakyClosePeek should produce trades (it always acts on close)."""
+
+class TestLeakyStrategy:
+    def test_leaky_strategy_runs_and_trades(self):
         data = _make_trending_ohlcv()
-        _, stats = _run_strategy_returns(LeakyClosePeek, data)
+        returns, stats = _run_strategy_returns(LeakyFuturePeek, data)
+        assert len(returns) > 0
         assert int(stats.get("# Trades", 0)) > 0
 
-    def test_leaky_uses_current_close(self):
-        """Verify the strategy is actually leaking (reading current bar close)."""
-        import inspect
-        source = inspect.getsource(LeakyClosePeek.next)
-        # It should reference self.data.Close[-1] and self.data.Open[-1] in same bar.
-        assert "Close[-1]" in source
-        assert "Open[-1]" in source
+    @pytest.mark.finding("H8")
+    def test_leaky_actually_peeks_at_the_future(self):
+        # The genuine leak is a shift(-1) indicator (tomorrow's bar known today), not a same-bar close read.
+        source = inspect.getsource(LeakyFuturePeek.init)
+        assert "shift(-1)" in source
 
 
 class TestCleanStrategy:
     def test_clean_strategy_runs(self):
         data = _make_trending_ohlcv()
-        returns, stats = _run_strategy_returns(CleanSMACross, data)
+        returns, _ = _run_strategy_returns(CleanSMACross, data)
         assert len(returns) > 0
 
     def test_clean_uses_only_indicators(self):
-        """CleanSMACross should use SMA indicators, not raw Close."""
-        import inspect
         source = inspect.getsource(CleanSMACross.next)
-        # Uses self.fast and self.slow (indicators), not self.data.Close for decisions.
-        assert "self.fast" in source
-        assert "self.slow" in source
+        assert "self.fast" in source and "self.slow" in source
 
 
 class TestCanaryDiscrimination:
-    """The canary should distinguish leaky from clean strategies on synthetic data."""
+    """H8/M22 — the canary must FAIL the genuinely-leaky control and clear the clean one."""
 
-    def test_leaky_profits_more_on_random_data(self):
-        """On random walk data, the leaky strategy should still show profit
-        (because it peeks at close), while a clean strategy should be ~zero."""
-        from src.backend.backtesting.gates.synthetic import generate_random_walk_ohlcv
+    @pytest.mark.finding("H8")
+    def test_canary_catches_the_leaky_control_and_clears_clean(self):
+        real = _make_trending_ohlcv(300, seed=99)
+        leaky_real, _ = _run_strategy_returns(LeakyFuturePeek, real)
+        clean_real, _ = _run_strategy_returns(CleanSMACross, real)
 
-        real_data = _make_trending_ohlcv(300, seed=99)
-        paths = generate_random_walk_ohlcv(real_data, n_paths=20, seed=123)
+        r_leaky = LeakageCanaryGate(run_strategy_fn=_run_fn(LeakyFuturePeek), n_paths=25).check(
+            GateContext(metrics={"ohlcv_df": real}, trades=[], returns=leaky_real, equity_curve=[]))
+        r_clean = LeakageCanaryGate(run_strategy_fn=_run_fn(CleanSMACross), n_paths=25).check(
+            GateContext(metrics={"ohlcv_df": real}, trades=[], returns=clean_real, equity_curve=[]))
 
-        leaky_srs = []
-        clean_srs = []
-        for path in paths:
-            try:
-                lr, _ = _run_strategy_returns(LeakyClosePeek, path)
-                if len(lr) > 10:
-                    leaky_srs.append(np.mean(lr) / (np.std(lr, ddof=1) + 1e-9))
-            except Exception:
-                pass
-            try:
-                cr, _ = _run_strategy_returns(CleanSMACross, path)
-                if len(cr) > 10:
-                    clean_srs.append(np.mean(cr) / (np.std(cr, ddof=1) + 1e-9))
-            except Exception:
-                pass
+        # The leaky control profits on PURE NOISE → the canary FAILs it (the positive control now leaks).
+        assert r_leaky.status == GateStatus.FAIL
+        assert r_leaky.details["noise_mean_sr"] > 0.02
+        # The clean control has no edge on noise → its noise distribution is ~centered at zero.
+        assert r_clean.details["noise_mean_sr"] < r_leaky.details["noise_mean_sr"] / 2
 
-        if leaky_srs and clean_srs:
-            # Leaky strategy should have higher mean SR on noise than clean.
-            # This isn't guaranteed on every seed but should hold statistically.
-            leaky_mean = np.mean(leaky_srs)
-            clean_mean = np.mean(clean_srs)
-            # At minimum, verify both ran successfully.
-            assert len(leaky_srs) >= 5, "Not enough leaky paths succeeded"
-            assert len(clean_srs) >= 5, "Not enough clean paths succeeded"
+    @pytest.mark.finding("M22")
+    def test_canary_is_provisional_without_a_run_fn(self):
+        # M22 wiring: with no run function (gate inert until the loop supplies one) it provisional-passes,
+        # never fabricates a verdict.
+        r = LeakageCanaryGate().check(GateContext(metrics={}, trades=[], returns=np.zeros(50), equity_curve=[]))
+        assert r.status == GateStatus.PASS
+        assert r.details["details"]["provisional"] is True

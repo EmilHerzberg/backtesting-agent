@@ -230,6 +230,7 @@ class ResearchState:
     train_end: str = ""                               # P2: regime select-on-train split ("" = no split / robustness)
     oos_results: list[OOSResult] = field(default_factory=list)
     lineage_nodes: list = field(default_factory=list)  # ATSX-26: serialized lineage tree
+    holdout_eval_counts: dict[str, int] = field(default_factory=dict)  # H18: reuses of each (asset,slice) hold-out
 
     def _criteria_satisfying(self) -> list["Candidate"]:
         """Candidates that satisfy the user's parsed numeric criteria (C3). When no criteria were

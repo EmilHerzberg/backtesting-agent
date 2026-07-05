@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 
 import numpy as np
+import pytest
 
 from src.backend.ai.research.loop import (
     VALIDATE_MIN_TRADES,
@@ -12,6 +13,7 @@ from src.backend.ai.research.loop import (
     _compute_regime_decay,
     _days,
     _run_regime_holdout,
+    _sidak_t_star,
     _train_split,
 )
 from src.backend.backtesting.gates.basic_gates import MinimumActivityGate, per_trade_t
@@ -38,6 +40,7 @@ class _FakeExec:
 
 _STRONG = [0.01 + 0.001 * ((i % 3) - 1) for i in range(30)]   # mean~1%, tiny std → t well above 1.65
 _FLAT = [0.05 if i % 2 else -0.05 for i in range(30)]          # mean~0 → t~0
+_MODERATE = [0.015 if i % 2 else -0.005 for i in range(30)]    # per-trade t ≈ 2.7: passes 1.65, fails 2.8
 
 
 # ── _train_split (P2-R2) ──────────────────────────────────────────────
@@ -84,6 +87,34 @@ def test_holdout_no_slice():
     # slice shorter than MIN_HOLD_DAYS
     short = _run_regime_holdout({}, _FakeData(), ex, "2020-05-01", "2020-06-01")
     assert short["status"] == "unvalidated" and ex.windows == []  # never even ran the backtest
+
+
+# ── H18/D6: hold-out reuse multiplicity — the bar tightens with the peek count ──
+@pytest.mark.finding("H18")
+def test_sidak_t_star_tightens_with_reuse():
+    # k=1 is clamped to the single-test bar; more peeks give a strictly higher bar.
+    assert _sidak_t_star(1) == pytest.approx(VALIDATE_T)
+    assert _sidak_t_star(5) > _sidak_t_star(1)
+    assert _sidak_t_star(20) > _sidak_t_star(5)
+    # 20 reuses at family-wise α=0.05 → t* ≈ 2.8 (Šidák), not the naive 1.65.
+    assert 2.7 < _sidak_t_star(20) < 2.9
+    # Never loosens below the base bar.
+    assert _sidak_t_star(1000) >= VALIDATE_T
+
+
+@pytest.mark.finding("H18")
+def test_holdout_verdict_uses_the_corrected_bar():
+    # A t ≈ 2.7 edge: VALIDATED at the single-test bar, but FAILED once the bar is corrected for
+    # heavy hold-out reuse (t* = 2.8). Same data, same trades — only the multiplicity bar differs.
+    ex = _FakeExec({"n_trades": 30, "trade_returns": _MODERATE, "sharpe_annual": 1.0})
+    base = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01")
+    assert base["status"] == "regime_validated"
+    assert base["t_star"] == pytest.approx(VALIDATE_T)
+
+    strict = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01", t_star=2.8)
+    assert strict["status"] == "regime_failed"
+    assert strict["t_star"] == pytest.approx(2.8)
+    assert strict["holdout_t"] == base["holdout_t"]   # identical evidence, stricter bar
 
 
 # ── shared per_trade_t (no drift between selection + validation) ───────

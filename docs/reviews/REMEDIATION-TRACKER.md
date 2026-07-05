@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **19 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50) + L17, L22. **✅ All 3 criticals fixed. Phase 1 COMPLETE + adversarially reviewed.**
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **34 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50 · 2A: H3/H14/H15/H16/H17/H18 · 2B: H5 · 2C: H4/H8/H24/M19/M20/M21/M22/M23) + L17, L22. **✅ All 3 criticals fixed. Phase 1 COMPLETE + adversarially reviewed. Phase 2 COMPLETE (2A OOS/hold-out · 2B default-OOS/D9 · 2C gates: fixes + lag producer + wired leakage canary). NEXT = Phase 2 PR to main, then Phase 3 (data integrity).**
 
 > **Phase 1 review (2026-07-05, `PHASE1-REVIEW-2026-07-05.md`):** a 9-reviewer adversarial audit found 12 real issues (0 crit, 7 high) — 5 behavioral defects where a fix didn't reach the production path + 7 test-integrity gaps. **All 12 fixed** in commit "Phase 1 review fixes": M4 shipped on the CLI/YAML default; the C3 default-goal Sharpe-floor regression removed; win_rate/profit_factor goals now enforced (not skipped); the generator warm-up mask made effective; the reslice put on the geometric Sharpe scale; and the DSR-loop / reslice-value / generator / M5·L17 / H30 / M24 tests added. Suite 635 pass.
 
@@ -78,28 +78,28 @@
 ### Cluster 2A — OOS / hold-out contract
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| H3 | High | spec | SPEC | | Sign-only PASS bar → real bar (D5) |
-| H14 | High | mech | OPEN | | Fresh lineage per candidate → key budget on lineage root |
-| H15 | High | mech | OPEN | | Hardcoded stale 2025 OOS window → derive dynamically |
-| H16 | High | mech | OPEN | | Swallowed AlreadyEvaluatedError → recover stored verdict |
-| H17 | High | mech | OPEN | | Infra error → immutable FAIL; add UNEVALUATED outcome |
-| H18 | High | spec | SPEC | | Hold-out reused/ranked → multiplicity control (D6) |
+| H3 | High | spec | DONE | `test_oos_lockbox_2a.py` | D5: sign-only bar → sample + per-trade t≥1.65 + excess-over-buy-hold; thin=UNEVALUATED |
+| H14 | High | mech | DONE | `test_oos_lockbox_2a.py` | budget/token keyed on lineage ROOT via `LineageTracker.get_root` (shared family allowance) |
+| H15 | High | mech | DONE | `test_oos_lockbox_2a.py` | OOS window_end = live `_env_bounds()[1]`, not the "2025-12-31" literal |
+| H16 | High | mech | DONE | `test_oos_lockbox_2a.py` | added `OOSLockboxService.get_result`; loop recovers prior verdict instead of re-raising |
+| H17 | High | mech | DONE | `test_oos_lockbox_2a.py` | added `OOSOutcome.UNEVALUATED`; exception/thin sample spends no budget, writes no row, retryable |
+| H18 | High | spec | DONE | `test_regime_holdout.py` | D6: `_sidak_t_star(k)` — hold-out bar Šidák-corrected for its reuse count (per asset+slice); thin peeks don't count |
 
 ### Cluster 2B — Default OOS
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| H5 | High | dec | DECISION | | Default enable_oos on, or cap tier when off (D9) |
+| H5 | High | dec | DONE | `test_quality.py` | D9 FULL: OOS default-ON (run.py/router, per-run `:memory:`); only a held-out PASS earns "strong" — OFF/PENDING/UNEVALUATED capped at "moderate" + honest marker |
 
 ### Cluster 2C — Wire-or-demote inert gates
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| H4 | High | dec | DECISION | | gates.default.yaml never loaded — wire or delete |
-| H24 | High | mech | OPEN | | Survivorship hard gate fed wrong flag key |
-| M19 | Med | mech | OPEN | | Benchmark gate Path C vacuous, Path B dead |
-| M20 | Med | mech | OPEN | | Rigor presets don't bind below Sharpe 0.5 |
-| M21 | Med | mech | OPEN | | Graveyard kill-cause misattribution |
-| M22 | Med | dec | DECISION | | Leakage canary dead — wire for survivors or mark CI-only |
-| M23 | Med | dec | DECISION | | Lag gate has no producer — implement or NOT_EVALUATED |
+| H4 | High | dec | DONE | (removed) | DELETED config/gates.default.yaml (never loaded); RIGOR_PRESETS documented as single source of truth |
+| H24 | High | mech | DONE | `test_basic_gates.py` | loop feeds real `get_bias_flags(provider)`; ProviderCapabilityGate now SOFT (surfaces survivorship risk, doesn't hard-block the default) |
+| M19 | Med | mech | DONE | `test_basic_gates.py` | Path C now risk-aware (excess>0 AND no Sharpe degradation); loop forwards `buy_hold_max_drawdown` so Path B binds |
+| M20 | Med | mech | DONE | `test_gatekeeper_presets.py` | `min_stressed_sharpe` added to each preset (≤ min_sharpe) and applied to CostStressGate |
+| M21 | Med | mech | DONE | `test_pipeline.py` | only HARD fails set `first_failed_gate`; hard-gate ERROR is terminal under new `errored_gate` |
+| M22 | Med | dec | DONE | `test_leakage_suite.py` | WIRED: run_strategy_fn closure + ohlcv_df threaded through gatekeeper; canary added to pipeline (SOFT, survivors-only via cost_rank 10); `enable_leakage_canary` flag |
+| M23 | Med | dec | DONE | `test_lag_gate_m23.py` | Option A: executor reconstructs held positions + re-derives P&L with all fills delayed 1 bar → `lagged_sharpe_annual`; gate now evaluates (None→provisional) |
 
 ---
 
@@ -192,7 +192,7 @@
 | M30 | Med | test | OPEN | | No select-on-train wiring test |
 | H13 | High | mech | OPEN | | Event gate honored only by SMACrossover |
 | H7 | High | mech | DONE (review) | `tests/unit/backtesting/test_finalize_trades_h7.py` | finalize_trades=True in runner.py; done early as Phase-0 worked example |
-| H8 | High | mech | OPEN | | Leakage-canary positive control isn't leaky |
+| H8 | High | mech | DONE | `test_leakage_suite.py` | genuinely-leaky control `LeakyFuturePeek` (shift(-1) future peek) replaces the non-leaky `LeakyClosePeek`; discrimination test now asserts canary FAILs leaky / clears clean (done with M22) |
 | H11 | High | mech | OPEN | | ADX strength→BUY + DM tie asymmetry |
 | M13 | Med | mech | OPEN | | size=1.0 buys one share, inverts gate semantics |
 | M14 | Med | mech | OPEN | | create_with_params accepts typo'd params silently |

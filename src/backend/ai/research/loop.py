@@ -242,6 +242,7 @@ def _downsample_curve(curve: Any, max_points: int = 120) -> list:
 MIN_HOLD_DAYS = 120          # a hold-out (or decay slice) below ~4mo can't mean anything
 VALIDATE_MIN_TRADES = 20     # P2-R4: a "validated" claim needs a non-trivial sample (independent of rigor)
 VALIDATE_T = 1.65            # P2-R4: ~95% one-sided; stricter than quick/medium selection t*
+OOS_MIN_TRADES = VALIDATE_MIN_TRADES  # D5/H3: an OOS verdict needs a real sample, else UNEVALUATED
 
 
 def _days(a: str, b: str) -> int:
@@ -372,11 +373,27 @@ def _compute_regime_decay(spec, in_regime_sharpe, data_agent, executor, window_s
     }
 
 
-def _run_regime_holdout(spec, data_agent, executor, train_end, window_end) -> dict:
+def _sidak_t_star(k: int) -> float:
+    """H18/D6 — validation t* corrected for reusing the SAME hold-out across k surfaced ideas.
+
+    The regime hold-out is peeked at once per surfaced candidate; held at a fixed 1.65 bar the
+    family-wise false-validation rate inflates (~64% over 20 independent peeks). Šidák keeps it near
+    the intended 5%: per-test ``α_k = 1-(1-0.05)^(1/k)`` and ``t* = Φ⁻¹(1-α_k)``. Clamped to never
+    fall below the single-test bar VALIDATE_T, so reuse only ever TIGHTENS the bar (k=1 ⇒ VALIDATE_T,
+    more peeks ⇒ a higher t*)."""
+    from statistics import NormalDist
+    k = max(1, int(k))
+    alpha_k = 1.0 - (1.0 - 0.05) ** (1.0 / k)
+    return max(VALIDATE_T, float(NormalDist().inv_cdf(1.0 - alpha_k)))
+
+
+def _run_regime_holdout(spec, data_agent, executor, train_end, window_end, *,
+                        t_star: float = VALIDATE_T) -> dict:
     """P2 — within-regime forward-slice validation. Select-on-train: the idea was surfaced on the
     train slice; here we test whether the edge PERSISTS on the unseen final hold-out. A pass earns
     ``regime_validated``; a collapse ``regime_failed``; a too-thin slice stays ``unvalidated``
-    (unvalidatable, not a failure). Uses a DEDICATED stricter bar (P2-R4), NOT the selection rigor.
+    (unvalidatable, not a failure). Uses a DEDICATED stricter bar (P2-R4), NOT the selection rigor;
+    ``t_star`` may be raised above VALIDATE_T by the caller to correct for hold-out reuse (H18/D6).
     Local backtest (no LLM). Never raises into the loop."""
     if not train_end or _days(train_end, window_end) < MIN_HOLD_DAYS:
         return {"status": "unvalidated", "reason": "no usable hold-out slice"}
@@ -393,10 +410,10 @@ def _run_regime_holdout(spec, data_agent, executor, train_end, window_end) -> di
                 "holdout_period": [train_end, window_end], "holdout_trades": n}
     from src.backend.backtesting.gates.basic_gates import per_trade_t
     t = per_trade_t(tr)                          # shared helper — same math as the activity gate
-    passed = t >= VALIDATE_T                      # positive + significant at the validation bar
+    passed = t >= t_star                          # positive + significant at the (reuse-corrected) bar
     return {"status": "regime_validated" if passed else "regime_failed",
             "holdout_period": [train_end, window_end], "holdout_trades": n,
-            "holdout_t": round(float(t), 3), "t_star": VALIDATE_T,
+            "holdout_t": round(float(t), 3), "t_star": round(float(t_star), 3),
             "holdout_sharpe": round(float(m.get("sharpe_annual", 0.0)), 3)}
 
 
@@ -413,6 +430,39 @@ class _PromotionToken:
         self.approved_at = datetime.now(timezone.utc)
 
 
+def _oos_verdict(m: dict) -> Any:
+    """D5 / H3 — the real OOS pass bar.
+
+    The old bar was sign-only (``sharpe_annual > 0 and total_return > 0``): a single lucky trade
+    passed. The honest bar requires a real trade sample, per-trade significance at the validation
+    ``t*``, and a positive edge *over buy-and-hold* (beating a flat long, not just being positive).
+    Too few trades is UNEVALUATED — 'we don't know' — never a FAIL (model-honesty principle).
+    """
+    from src.backend.backtesting.gates.basic_gates import per_trade_t
+    from src.backend.backtesting.lockbox.service import OOSOutcome
+
+    n = int(m.get("n_trades", 0))
+    tr = m.get("trade_returns") or []
+    if n < OOS_MIN_TRADES or len(tr) < 2:
+        return OOSOutcome.UNEVALUATED            # too thin to judge — not a failure
+    t = per_trade_t(tr)                          # shared helper — same math as the activity gate
+    excess = float(m.get("total_return", 0.0)) - float(m.get("buy_hold_return", 0.0))
+    passed = (t >= VALIDATE_T) and (excess > 0.0)
+    return OOSOutcome.PASS if passed else OOSOutcome.FAIL
+
+
+def _record_oos(state: ResearchState, candidate: Candidate, outcome_value: str,
+                lineage_id: str, emit: Any) -> None:
+    """Append the OOS verdict to state (last-wins per hash for the trust badge) and emit it."""
+    state.oos_results.append(OOSResult(
+        strategy_hash=candidate.strategy_hash,
+        lineage_id=lineage_id,
+        outcome=outcome_value,
+        evaluated_at=datetime.now(timezone.utc).isoformat(),
+    ))
+    emit("oos_result", {"strategy_hash": candidate.strategy_hash, "outcome": outcome_value})
+
+
 def _run_oos_lockbox(
     lockbox: Any,
     candidate: Candidate,
@@ -421,49 +471,60 @@ def _run_oos_lockbox(
     data_agent: DataAgentProtocol,
     executor: ExecutorProtocol,
     emit: Any,
+    lineage_tracker: LineageTracker | None = None,
 ) -> None:
-    """Run OOS lockbox evaluation for a candidate. Budget-exempt: does NOT consume a run."""
-    # Ensure OOS budget for this lineage.
-    lockbox.ensure_budget(state.current_lineage_id)
+    """Run OOS lockbox evaluation for a candidate. Budget-exempt: does NOT consume a run.
 
+    H14: the budget and terminal result are keyed on the lineage ROOT, so mutated children of the
+    same hypothesis share one scarce OOS allowance — a fresh per-iteration lineage would hand every
+    candidate its own untouched budget, defeating the lockbox. H16: a candidate that already has a
+    terminal verdict recovers it instead of re-raising AlreadyEvaluatedError (which left it PENDING
+    forever). H3/H17: the bar is significance-based, and an unevaluable candidate is UNEVALUATED,
+    never a terminal FAIL.
+    """
+    from src.backend.backtesting.lockbox.service import OOSOutcome
+
+    # H14: root the budget/token on the lineage root (one shared family allowance).
+    budget_lineage = state.current_lineage_id
+    if lineage_tracker is not None:
+        root = lineage_tracker.get_root(state.current_lineage_id)
+        if root is not None:
+            budget_lineage = root.lineage_id
+
+    # H16: recover a prior terminal verdict rather than re-evaluating (or re-raising).
+    prior = lockbox.get_result(candidate.strategy_hash)
+    if prior is not None:
+        _record_oos(state, candidate, prior.value, budget_lineage, emit)
+        return
+
+    lockbox.ensure_budget(budget_lineage)
     token = _PromotionToken(
         approver="auto",
         strategy_hash=candidate.strategy_hash,
-        lineage_id=state.current_lineage_id,
+        lineage_id=budget_lineage,
     )
 
-    # Build an OOS backtest callable for the lockbox.
-    # Uses a different time window (OOS window after IS window).
-    def _oos_backtest() -> bool:
-        oos_spec = {**spec}
-        oos_spec["window_start"] = spec.get("window_end", "2024-01-01")
-        oos_spec["window_end"] = "2025-12-31"
-        try:
-            oos_data, oos_wb = _prepare_with_warmup(
-                data_agent, state.current_asset,
-                oos_spec["window_start"], oos_spec["window_end"], oos_spec,
-            )
-            oos_metrics = executor.run(oos_spec, oos_data, warmup_bars=oos_wb)
-            return (
-                oos_metrics.get("sharpe_annual", 0.0) > 0
-                and oos_metrics.get("total_return", 0.0) > 0
-            )
-        except Exception:
-            return False
+    # Build an OOS backtest callable for the lockbox: the window runs from the IS window_end to the
+    # latest available data (H15 — the live envelope, never a hardcoded literal that goes stale).
+    # H17: infra failures are allowed to PROPAGATE — the lockbox maps them to UNEVALUATED, not FAIL.
+    def _oos_backtest() -> Any:
+        oos_start = spec.get("window_end") or _env_bounds()[0]
+        oos_end = _env_bounds()[1]
+        oos_spec = {**spec, "window_start": oos_start, "window_end": oos_end}
+        oos_data, oos_wb = _prepare_with_warmup(
+            data_agent, state.current_asset, oos_start, oos_end, oos_spec,
+        )
+        oos_metrics = executor.run(oos_spec, oos_data, warmup_bars=oos_wb)
+        return _oos_verdict(oos_metrics)
 
     outcome = lockbox.evaluate(token, run_oos_backtest=_oos_backtest)
+    _record_oos(state, candidate, outcome.value, budget_lineage, emit)
 
-    oos_result = OOSResult(
-        strategy_hash=candidate.strategy_hash,
-        lineage_id=state.current_lineage_id,
-        outcome=outcome.value,
-        evaluated_at=datetime.now(timezone.utc).isoformat(),
-    )
-    state.oos_results.append(oos_result)
-    emit("oos_result", {"strategy_hash": candidate.strategy_hash, "outcome": outcome.value})
-
-    if outcome.value == "FAIL":
+    if outcome is OOSOutcome.FAIL:
         logger.info("OOS FAIL for %s — terminal.", candidate.strategy_hash[:16])
+    elif outcome is OOSOutcome.UNEVALUATED:
+        logger.info("OOS UNEVALUATED for %s — retryable (thin sample or data outage).",
+                    candidate.strategy_hash[:16])
 
 
 # ── The Loop ──────────────────────────────────────────────────────────
@@ -482,6 +543,7 @@ async def research_loop(
     budget_controller: AgentBudgetController | None = None,
     on_event: Any = None,  # callback for UI/logging events
     control: Any = None,  # callable() -> "run"|"pause"|"stop"|"stop_report" (A-9)
+    enable_leakage_canary: bool = True,  # M22: run the leakage canary on survivors (re-runs on synthetics)
 ) -> ResearchState:
     """Run the autonomous research loop until budget exhausted or goal met.
 
@@ -640,12 +702,16 @@ async def research_loop(
                     window_start=spec.get("window_start", "2010-01-01"),
                     window_end=spec.get("window_end", "2023-12-31"),
                 )
+                # H24: attach the provider's REAL bias flags (single source of truth in the capability
+                # registry) — the gate reads `survivorship_bias`, which the old hand-rolled
+                # {"prototype_data": True} never set, so the survivorship check was silently inert.
+                from src.backend.backtesting.registry.capabilities import get_bias_flags
                 snapshot = DataSnapshot(
                     security_id=state.current_asset,
                     window_start=spec.get("window_start", "2010-01-01"),
                     window_end=spec.get("window_end", "2023-12-31"),
                     provider=spec.get("provider", "yfinance"),
-                    bias_flags={"prototype_data": True} if spec.get("provider", "yfinance") == "yfinance" else {},
+                    bias_flags=get_bias_flags(spec.get("provider", "yfinance")),
                     data=raw_data,
                 )
                 emit("data_prepared", {
@@ -694,6 +760,7 @@ async def research_loop(
                 benchmark={
                     "buy_hold_return": metrics.get("buy_hold_return", 0.0),
                     "buy_hold_sharpe": metrics.get("buy_hold_sharpe", 0.0),
+                    "buy_hold_max_drawdown": metrics.get("buy_hold_max_drawdown", 0.0),  # M19: Path B was dead without it
                 },
                 regime_analysis=regime_analysis,
             )
@@ -717,6 +784,12 @@ async def research_loop(
             gatekeeper.update_registry_stats(
                 _dsr_n_trials, sr_variance, variance_defaulted=_sr_defaulted
             )
+            # M22: a closure that re-runs THIS candidate's spec on arbitrary OHLCV — the leakage
+            # canary runs it on zero-drift synthetics (only reached by survivors of the cheaper gates).
+            _canary_run_fn = (
+                (lambda df: executor.run(spec, df).get("returns"))
+                if enable_leakage_canary else None
+            )
             try:
                 gate_report = gatekeeper.evaluate(
                     metrics=metrics,
@@ -728,6 +801,7 @@ async def research_loop(
                         "benchmark": artifacts.benchmark,
                         "regime_analysis": regime_analysis,
                         "content_hash": snapshot.content_hash,
+                        "run_strategy_fn": _canary_run_fn,
                     },
                 )
             except Exception as exc:
@@ -844,8 +918,17 @@ async def research_loop(
                         spec, sharpe, data_agent, executor, state.window_start, state.window_end)
                     # P2: within-regime forward-slice hold-out — upgrades UNVALIDATED → regime_validated
                     # where earned (select-on-train; runs BEFORE the cap, inline on every surfaced idea, F-7).
+                    # H18/D6: the hold-out is reused on every surfaced idea against the SAME slice, so the
+                    # bar is Šidák-corrected for that peek count — validating on a much-reused hold-out gets
+                    # progressively harder. Only an actual test (not a too-thin slice) consumes a peek.
+                    _ho_key = f"{state.current_asset}|{getattr(state, 'train_end', '')}|{state.window_end}"
+                    _ho_prior = state.holdout_eval_counts.get(_ho_key, 0)
                     _hold = _run_regime_holdout(
-                        spec, data_agent, executor, getattr(state, "train_end", ""), state.window_end)
+                        spec, data_agent, executor, getattr(state, "train_end", ""), state.window_end,
+                        t_star=_sidak_t_star(_ho_prior + 1))
+                    if _hold["status"] in ("regime_validated", "regime_failed"):  # a real test ran
+                        state.holdout_eval_counts[_ho_key] = _ho_prior + 1
+                        _hold["holdout_peek_index"] = _ho_prior + 1
                     candidate.holdout = _hold
                     candidate.validation_status = _hold["status"]     # overrides the "unvalidated" default
                     if _hold["status"] == "regime_failed":            # F-5: floored + a weakness
@@ -876,7 +959,8 @@ async def research_loop(
             if oos_enabled:
                 state.phase = ResearchPhase.OOS_EVALUATING
                 try:
-                    _run_oos_lockbox(lockbox, candidate, spec, state, data_agent, executor, emit)
+                    _run_oos_lockbox(lockbox, candidate, spec, state, data_agent, executor, emit,
+                                     lineage_tracker)
                 except Exception as exc:
                     logger.error("OOS lockbox error: %s", exc, exc_info=True)
 

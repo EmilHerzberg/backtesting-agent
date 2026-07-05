@@ -89,7 +89,9 @@ def _robustness_tier(
     t: float | None, tier: str, excess: float | None, oos: str, dsr: dict | None
 ) -> tuple[str, str]:
     """CS-1: the tier is built from the RELIABLE per-run signals — NOT the DSR (which is censored
-    for survivors, CF-6). OOS FAIL is dispositive; OFF/PENDING is neutral (CF-2)."""
+    for survivors, CF-6). OOS FAIL is dispositive. D9/H5: only a real held-out PASS earns "strong" —
+    an in-sample-only run (OOS OFF), a still-pending one, or an inconclusive one (UNEVALUATED) is
+    capped at "moderate", never "strong" (no hold-out proof ⇒ no top badge)."""
     exc = excess or 0.0
     adequate = tier == "adequate"
 
@@ -97,7 +99,7 @@ def _robustness_tier(
         grade = "weak"
     elif tier == "" and excess is None:                 # no gradeable signal at all → honest "provisional"
         grade = "provisional"
-    elif adequate and exc > 0 and oos in ("PASS", "OFF", "PENDING"):
+    elif adequate and exc > 0 and oos == "PASS":        # D9/H5: "strong" REQUIRES a held-out PASS
         grade = "strong"
     elif tier in ("adequate", "thin") and exc > 0:
         grade = "moderate"
@@ -113,6 +115,10 @@ def _robustness_tier(
         parts.append("passed out-of-sample")
     elif oos == "FAIL":
         parts.append("FAILED out-of-sample")
+    elif oos == "OFF":
+        parts.append("in-sample only (no hold-out)")
+    elif oos == "UNEVALUATED":
+        parts.append("out-of-sample inconclusive (too few trades)")
     if dsr is not None:
         parts.append(
             f"multiple-testing check: provisional ({dsr['trials']} trials)"
