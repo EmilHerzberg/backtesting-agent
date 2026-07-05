@@ -245,6 +245,11 @@ def run_backtest(
             commission=config.commission,
             exclusive_orders=config.exclusive_orders,
             trade_on_close=config.trade_on_close,
+            # H7 (QUANT-REVIEW-2026-07-03): close trades still open on the last bar so they are
+            # included in # Trades / Win Rate / Profit Factor. Without this, a position held to the
+            # end contributes its PnL to the equity/return but is dropped from every trade stat,
+            # making trade_count inconsistent with total_return (and a fully-invested run report 0 trades).
+            finalize_trades=True,
         )
         stats = bt.run()
     except Exception as exc:
