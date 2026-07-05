@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **9 / 95** (H7, H1, M25, M24, H2-scoped, H6, **C1**, M26, H12). 1 of 3 criticals fixed. **Clusters 1A + 1B complete** (M3 materially done, remainder tracked).
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **12 / 95** (H7, H1, M25, M24, H2-scoped, H6, **C1**, M26, H12, **C2**, M5, M6) + L17. **2 of 3 criticals fixed.** Clusters 1A + 1B + 1C complete.
 
 **Board mirror (local `tickets/`, staged for Jira — token was expired 2026-06-18):** Epic **ATS-1787**. Stories: Phase 0 = ATS-1788, Phase 1 = ATS-1789, Phase 2 = ATS-1790, Phase 3 = ATS-1791, Phase 4 = ATS-1792, Phase 5 = ATS-1793. Cluster sub-tasks = ATS-1794…1812 (one per cluster below, in order). Update ticket status via `board.py status <KEY> <status>` (auto-pushes to Jira when the token is valid).
 
@@ -48,10 +48,10 @@
 ### Cluster 1C — Interval-aware annualization
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| C2 | **Crit** | spec | SPEC | | `periods_per_year` from BarInterval — needs factor table (D7) |
-| M5 | Med | mech | OPEN | | Gate compares geometric vs arithmetic Sharpe |
-| M6 | Med | mech | OPEN | | ddof/estimator mismatch; one Sharpe definition platform-wide |
-| L17 | Low | mech | BACKLOG | | Alpha never annualized (fold into C2) |
+| C2 | **Crit** | spec | DONE (review) | `tests/unit/backtesting/test_annualization_c2.py` | `periods_per_year(index)` infers the factor from bar spacing (252/365/52/12), matching backtesting.py's `annual_trading_days`; threaded through buy_hold, market, Sortino, runner reslice. No more hardcoded sqrt(252). |
+| M5 | Med | mech | DONE (review) | `…test_annualization_c2.py` | `benchmark_sharpe` replicates backtesting.py's geometric/compounded estimator, so benchmark and strategy Sharpe are on the same scale in the gate. |
+| M6 | Med | mech | DONE (review) | `…test_annualization_c2.py` | `compute_buy_hold` is the single benchmark-Sharpe source (ddof=1, interval-aware); executor no longer computes its own ddof=0 duplicate. |
+| L17 | Low | mech | DONE | `…test_annualization_c2.py` | Alpha annualized (× `periods_per_year`) in `market.py`. |
 
 ### Cluster 1D — Metric formulas the optimizer/gates consume
 | ID | Sev | Bucket | Status | Test | Note |

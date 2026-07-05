@@ -142,6 +142,88 @@ def calculate_calmar(
     return annualised_return / abs(max_drawdown_pct)
 
 
+# ---------------------------------------------------------------------------- #
+# C2 — interval-aware annualization (matches backtesting.py 0.6.5)
+# ---------------------------------------------------------------------------- #
+
+def periods_per_year(index) -> float:
+    """Annualization factor inferred from a DatetimeIndex's bar spacing, matching backtesting.py
+    0.6.5's ``annual_trading_days`` (C2): 52 weekly · 12 monthly · 1 yearly · 365 when weekend bars
+    are present (e.g. crypto) · else 252 daily. Defaults to 252 for a non-datetime / too-short index.
+    """
+    try:
+        idx = pd.DatetimeIndex(index)
+    except Exception:
+        return 252.0
+    if len(idx) < 3:
+        return 252.0
+    # Resolution-independent median bar spacing in days (idx may be datetime64[ns|us|…]).
+    deltas = np.diff(idx.values).astype("timedelta64[s]").astype(np.float64)
+    if deltas.size == 0:
+        return 252.0
+    freq_days = float(np.median(deltas)) / 86400.0
+    if abs(freq_days - 7.0) < 1.0:
+        return 52.0
+    if 28.0 <= freq_days <= 31.5:
+        return 12.0
+    if freq_days >= 360.0:
+        return 1.0
+    # Daily or sub-daily (hourly resamples to daily, like backtesting.py): 365 if weekend bars are
+    # present (e.g. crypto), else 252.
+    have_weekends = idx.dayofweek.to_series().between(5, 6).mean() > (2.0 / 7.0) * 0.6
+    return 365.0 if have_weekends else 252.0
+
+
+def _geometric_mean(returns: np.ndarray) -> float:
+    r = np.asarray(returns, dtype=np.float64)
+    r = r[np.isfinite(r)]
+    if r.size == 0:
+        return 0.0
+    lp = np.log1p(r)
+    if not np.isfinite(lp).all():
+        return float(np.nan_to_num(r.mean()))
+    return float(np.exp(lp.sum() / lp.size) - 1.0)
+
+
+def annualized_sharpe(returns, ppy: float = 252.0, ddof: int = 1) -> float:
+    """Simple (arithmetic) annualized Sharpe of a per-bar return series, risk-free 0. Used where only
+    a return series is available (e.g. residual / market Sharpe). C2: caller passes the interval-aware
+    ``ppy``."""
+    r = np.asarray(returns, dtype=np.float64)
+    r = r[np.isfinite(r)]
+    if r.size < 2:
+        return 0.0
+    sd = r.std(ddof=ddof)
+    if not np.isfinite(sd) or sd <= 0:
+        return 0.0
+    return float(r.mean() / sd * math.sqrt(ppy))
+
+
+def benchmark_sharpe(close: pd.Series, risk_free_rate: float = 0.0) -> float:
+    """Annualized Sharpe of a buy-and-hold of *close*, computed the SAME way backtesting.py 0.6.5
+    computes the STRATEGY Sharpe (geometric annualized return / compounded annualized volatility,
+    interval-aware, resampled to the native frequency) — so benchmark and strategy Sharpe sit on the
+    same scale for the gate comparison (C2 / M5 / M6). Falls back to the arithmetic estimator on a
+    non-datetime index."""
+    s = pd.Series(close).dropna()
+    if len(s) < 3:
+        return 0.0
+    ann = periods_per_year(s.index)
+    if not isinstance(s.index, pd.DatetimeIndex):
+        return annualized_sharpe(s.pct_change().dropna().to_numpy(), ann)
+    freq = {52.0: "W", 12.0: "ME", 1.0: "YE"}.get(ann, "D")
+    day_returns = s.resample(freq).last().dropna().pct_change().dropna()
+    if len(day_returns) < 2:
+        return 0.0
+    g = _geometric_mean(day_returns.to_numpy())
+    ann_ret = (1.0 + g) ** ann - 1.0
+    var = float(day_returns.var(ddof=1))
+    ann_vol_sq = (var + (1.0 + g) ** 2) ** ann - (1.0 + g) ** (2 * ann)
+    if ann_vol_sq <= 0:
+        return 0.0
+    return float((ann_ret - risk_free_rate) / math.sqrt(ann_vol_sq))
+
+
 def calculate_profit_factor(trades: list[TradeDetail]) -> float:
     """Compute profit factor: gross profits / gross losses.
 

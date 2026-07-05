@@ -20,6 +20,7 @@ from src.backend.backtesting.engine.metrics import (
     calculate_profit_factor,
     calculate_sortino,
     extract_trades,
+    periods_per_year,
 )
 
 logger = logging.getLogger(__name__)
@@ -282,9 +283,11 @@ def run_backtest(
     result = _parse_stats(stats)
 
     # C1/M3 — recompute per-bar metrics over the post-warm-up window only (the flat burn-in region
-    # would otherwise dilute the Sharpe/Sortino and understate the window return/drawdown).
+    # would otherwise dilute the Sharpe/Sortino and understate the window return/drawdown). C2: the
+    # windowed Sharpe uses the interval-aware annualization factor, not a hardcoded 252.
     if config.warmup_bars > 0:
-        result = _reslice_to_window(result, config.warmup_bars)
+        from src.backend.backtesting.engine.metrics import periods_per_year
+        result = _reslice_to_window(result, config.warmup_bars, periods_per_year(bt_data.index))
 
     # ATS-1714 — record successful completion.
     if _registry and run_id:
@@ -327,7 +330,7 @@ def run_backtest(
     return result
 
 
-def _reslice_to_window(result: BacktestResult, warmup_bars: int) -> BacktestResult:
+def _reslice_to_window(result: BacktestResult, warmup_bars: int, ppy: float = 252.0) -> BacktestResult:
     """C1/M3 — recompute per-bar metrics over the post-warm-up window only.
 
     After a warm-up run (indicators converge on the prefix; ``StrategyBase`` suppresses entries until
@@ -346,7 +349,7 @@ def _reslice_to_window(result: BacktestResult, warmup_bars: int) -> BacktestResu
         result.total_return = float(eq.iloc[-1] / eq.iloc[0] - 1.0)
     rets = eq.pct_change().dropna()
     if len(rets) > 1 and rets.std(ddof=1) > 0:
-        result.sharpe_ratio = float(rets.mean() / rets.std(ddof=1) * math.sqrt(252))
+        result.sharpe_ratio = float(rets.mean() / rets.std(ddof=1) * math.sqrt(ppy))
     else:
         result.sharpe_ratio = 0.0
     run_max = eq.cummax()
@@ -386,10 +389,12 @@ def _parse_stats(stats: pd.Series) -> BacktestResult:
 
     # --- Equity curve --------------------------------------------------- #
     equity_values: list[float] = []
+    ppy = 252.0  # C2 — interval-aware annualization for the derived (Sortino) metrics
     try:
         eq_df: pd.DataFrame = stats["_equity_curve"]
         if eq_df is not None and "Equity" in eq_df.columns:
             equity_values = eq_df["Equity"].tolist()
+            ppy = periods_per_year(eq_df.index)
     except (KeyError, TypeError):
         pass
 
@@ -399,7 +404,7 @@ def _parse_stats(stats: pd.Series) -> BacktestResult:
     trade_details = extract_trades(stats)
 
     # --- Derived metrics ------------------------------------------------ #
-    sortino = calculate_sortino(equity_series)
+    sortino = calculate_sortino(equity_series, periods_per_year=ppy)
 
     # Duration in years for Calmar
     try:

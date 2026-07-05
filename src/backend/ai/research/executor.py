@@ -99,14 +99,13 @@ class ResearchExecutor:
         bh_sharpe = 0.0
         bh_max_dd = 0.0
         if len(returns) > 1:
-            # M26/C1 — benchmark the window, not the warm-up prefix, so strategy-vs-benchmark matches.
-            close = data["Close"].values[warmup_bars:] if warmup_bars > 0 else data["Close"].values
-            bh_returns = np.diff(close) / close[:-1]
-            if len(bh_returns) > 0 and bh_returns.std() > 0:
-                bh_sharpe = float(bh_returns.mean() / bh_returns.std() * np.sqrt(252))
-                bh_cummax = np.maximum.accumulate(np.cumprod(1 + bh_returns))
-                bh_drawdowns = (np.cumprod(1 + bh_returns) - bh_cummax) / bh_cummax
-                bh_max_dd = float(bh_drawdowns.min()) if len(bh_drawdowns) > 0 else 0.0
+            # M6/C2: single benchmark source — compute_buy_hold uses the interval-aware, strategy-
+            # matched Sharpe estimator (no ad-hoc ddof=0 * sqrt(252) duplicate). Window past warm-up.
+            from src.backend.backtesting.benchmarks.buy_hold import compute_buy_hold
+            bh_df = data.iloc[warmup_bars:] if warmup_bars > 0 else data
+            _bh = compute_buy_hold(bh_df)
+            bh_sharpe = _bh.annualized_sharpe
+            bh_max_dd = _bh.max_drawdown
 
         return {
             "sharpe_annual": result.sharpe_ratio,

@@ -61,6 +61,7 @@ def compute_market_benchmark(
     strategy_returns: np.ndarray,
     asset_returns: np.ndarray,
     market_returns: np.ndarray | None = None,
+    periods_per_year: float = 252.0,
 ) -> MarketBenchmarkResult:
     """Compute market benchmark metrics.
 
@@ -68,18 +69,23 @@ def compute_market_benchmark(
         strategy_returns: Per-bar strategy returns.
         asset_returns: Per-bar buy-and-hold asset returns.
         market_returns: Per-bar market (SPY) returns, or None if unavailable.
+        periods_per_year: C2 — interval-aware annualization factor (252 daily, 52 weekly, …). Alpha
+            and the residual/market Sharpe are annualized with it instead of a hardcoded 252 (L17).
 
     Returns:
-        MarketBenchmarkResult with alpha/beta vs asset and market.
+        MarketBenchmarkResult with (annualized) alpha/beta vs asset and market.
     """
-    # Alpha/beta vs the traded asset (always available).
+    ann = math.sqrt(periods_per_year)
+
+    # Alpha/beta vs the traded asset (always available). L17: alpha annualized (per-bar * periods).
     alpha_asset, beta_asset = compute_alpha_beta(strategy_returns, asset_returns)
+    alpha_asset *= periods_per_year
 
     # Residual Sharpe: Sharpe of the residual (strategy - beta * asset).
     n = min(len(strategy_returns), len(asset_returns))
     residuals = strategy_returns[:n] - beta_asset * asset_returns[:n]
     residual_std = np.std(residuals, ddof=1) if len(residuals) > 1 else 0
-    residual_sharpe = float(np.mean(residuals) / residual_std * math.sqrt(252)) if residual_std > 0 else 0.0
+    residual_sharpe = float(np.mean(residuals) / residual_std * ann) if residual_std > 0 else 0.0
 
     if market_returns is None or len(market_returns) == 0:
         return MarketBenchmarkResult(
@@ -92,9 +98,10 @@ def compute_market_benchmark(
     # Market metrics.
     market_total = float(np.prod(1 + market_returns) - 1) if len(market_returns) > 0 else 0.0
     market_std = np.std(market_returns, ddof=1) if len(market_returns) > 1 else 0
-    market_sharpe = float(np.mean(market_returns) / market_std * math.sqrt(252)) if market_std > 0 else 0.0
+    market_sharpe = float(np.mean(market_returns) / market_std * ann) if market_std > 0 else 0.0
 
     alpha_market, beta_market = compute_alpha_beta(strategy_returns, market_returns)
+    alpha_market *= periods_per_year
 
     return MarketBenchmarkResult(
         market_return=market_total,
