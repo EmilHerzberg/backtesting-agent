@@ -68,7 +68,8 @@ class EMAIndicator(BacktestIndicator):
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
         self._validate_close(df)
-        return df["Close"].ewm(span=self._period, adjust=False).mean()
+        # H12: min_periods so the EMA is NaN until converged (no signals on an unwarmed EMA at bar 1).
+        return df["Close"].ewm(span=self._period, adjust=False, min_periods=self._period).mean()
 
     def signal(self, df: pd.DataFrame) -> pd.Series:
         self._validate_close(df)
@@ -117,14 +118,17 @@ class MACDIndicator(BacktestIndicator):
     def compute(self, df: pd.DataFrame) -> pd.Series:
         """Return the MACD line (fast EMA - slow EMA)."""
         self._validate_close(df)
-        fast_ema = df["Close"].ewm(span=self._fast, adjust=False).mean()
-        slow_ema = df["Close"].ewm(span=self._slow, adjust=False).mean()
+        # H12: min_periods so each EMA is NaN until converged.
+        fast_ema = df["Close"].ewm(span=self._fast, adjust=False, min_periods=self._fast).mean()
+        slow_ema = df["Close"].ewm(span=self._slow, adjust=False, min_periods=self._slow).mean()
         return fast_ema - slow_ema
 
     def compute_full(self, df: pd.DataFrame) -> pd.DataFrame:
         """Return DataFrame with columns macd, signal, histogram."""
         macd_line = self.compute(df)
-        signal_line = macd_line.ewm(span=self._signal_period, adjust=False).mean()
+        signal_line = macd_line.ewm(
+            span=self._signal_period, adjust=False, min_periods=self._signal_period
+        ).mean()
         histogram = macd_line - signal_line
         return pd.DataFrame(
             {"macd": macd_line, "signal": signal_line, "histogram": histogram},
@@ -145,6 +149,9 @@ class MACDIndicator(BacktestIndicator):
         signals = pd.Series(Signal.HOLD, index=df.index)
         signals[cross_up] = Signal.BUY
         signals[cross_down] = Signal.SELL
+        # H12: no cross signal while either line is still warming up (avoids a spurious cross on the
+        # first converged bar).
+        signals[macd_line.isna() | signal_line.isna()] = Signal.HOLD
         return signals
 
 
@@ -186,12 +193,15 @@ class ADXIndicator(BacktestIndicator):
         tr3 = (low - close.shift()).abs()
         true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-        atr = true_range.ewm(alpha=1.0 / self._period, adjust=False).mean()
-        plus_di = 100 * plus_dm.ewm(alpha=1.0 / self._period, adjust=False).mean() / atr
-        minus_di = 100 * minus_dm.ewm(alpha=1.0 / self._period, adjust=False).mean() / atr
+        # H12: min_periods so the smoothed DI/ATR/ADX are NaN until converged (ADX no longer votes BUY
+        # from bar 1-9 on an unwarmed average).
+        p = self._period
+        atr = true_range.ewm(alpha=1.0 / p, adjust=False, min_periods=p).mean()
+        plus_di = 100 * plus_dm.ewm(alpha=1.0 / p, adjust=False, min_periods=p).mean() / atr
+        minus_di = 100 * minus_dm.ewm(alpha=1.0 / p, adjust=False, min_periods=p).mean() / atr
 
         dx = (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan) * 100
-        adx = dx.ewm(alpha=1.0 / self._period, adjust=False).mean()
+        adx = dx.ewm(alpha=1.0 / p, adjust=False, min_periods=p).mean()
         return adx
 
     def signal(self, df: pd.DataFrame) -> pd.Series:

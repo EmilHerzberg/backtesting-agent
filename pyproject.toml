@@ -46,10 +46,12 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = [
     "perf: performance budget tests (Sprint I) — run with `pytest -m perf`",
     "determinism: backtest determinism checks (ATS-2004) — requires golden snapshot, run with `pytest -m determinism`",
     "slow: slow integration tests (e.g. ATS-2030 full pipeline) — run with `pytest -m slow`",
+    "finding: quant-review remediation regression test, tagged with the finding ID it closes (e.g. @pytest.mark.finding(\"H7\")) — see docs/reviews/REMEDIATION-TRACKER.md",
 ]
 
 [tool.ruff]

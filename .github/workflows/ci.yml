@@ -1,0 +1,68 @@
+name: CI
+
+# Phase 0 (quant-review remediation, ATS-1796): the merge gate.
+# Runs the €0 test suite (LLM mocked, market data frozen — no network, no keys) plus the
+# module-boundary contracts, on every push/PR. The determinism-marked tests are skipped here
+# (they need the golden snapshot, which is not committed); they run in determinism.yml when added.
+# TODO(Phase 0.3+): also run pytest inside the built backend image (ship-vs-tree authority).
+
+on:
+  push:
+    branches: [main, "quant-review/**", "feat/**"]
+  pull_request:
+
+jobs:
+  tests:
+    name: pytest (€0 unit + integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ship-vs-tree guard (no source file git-ignored)
+        # Root cause of the results/ + runs/ outage: unanchored gitignore patterns hid source
+        # files from the built image. Fail if any tracked-type source file is git-ignored.
+        run: |
+          hidden=$(git ls-files --others --ignored --exclude-standard -- src tests frontend/src 2>/dev/null | grep -E '\.(py|ts|tsx)$' || true)
+          if [ -n "$hidden" ]; then
+            echo "::error::Source files are git-ignored (invisible to the shipped image):"
+            echo "$hidden"
+            exit 1
+          fi
+
+      - name: Run test suite
+        run: pytest -q
+
+  lint-imports:
+    name: lint-imports (module boundaries)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run import-linter contracts
+        run: lint-imports --config .importlinter --no-cache

@@ -31,10 +31,13 @@ def _determinism_mode_active() -> bool:
         "1", "true", "yes", "on",
     }
 
-# Default composite weights used when none are supplied
+# Default composite weights used when none are supplied.
+# M4: max_drawdown is a FRACTION (F-013), so the old -0.4 weight made a 50% drawdown contribute only
+# -0.2 vs +0.6 per Sharpe unit — the composite silently degenerated to Sharpe maximization. Rescaled
+# for fraction units so a bad drawdown meaningfully offsets Sharpe (a 50% DD ≈ -0.75).
 _DEFAULT_COMPOSITE_WEIGHTS: dict[str, float] = {
     "sharpe": 0.6,
-    "max_drawdown": -0.4,
+    "max_drawdown": -1.5,
 }
 
 

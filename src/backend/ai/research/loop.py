@@ -57,7 +57,7 @@ class StrategistProtocol(Protocol):
 class ExecutorProtocol(Protocol):
     """Deterministic backtest execution."""
 
-    def run(self, spec: dict[str, Any], data: Any) -> dict[str, Any]:
+    def run(self, spec: dict[str, Any], data: Any, *, warmup_bars: int = 0) -> dict[str, Any]:
         """Run a backtest and return metrics dict."""
         ...
 
@@ -69,7 +69,9 @@ class GatekeeperProtocol(Protocol):
         """Run gates and return gate_report dict."""
         ...
 
-    def update_registry_stats(self, n_trials: int, sr_variance: float) -> None:
+    def update_registry_stats(
+        self, n_trials: int, sr_variance: float, *, variance_defaulted: bool = False
+    ) -> None:
         """Update DSR inputs from the registry."""
         ...
 
@@ -255,6 +257,39 @@ def _env_bounds() -> tuple[str, str]:
     return "2010-01-01", datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _period_sharpe(returns) -> float | None:
+    """Per-period (e.g. daily) Sharpe of a return series — the SAME quantity the Deflated-Sharpe
+    gate uses as its ``sr_hat`` (mean / std, ddof=1). Returns ``None`` for a series too short or flat
+    to have a defined Sharpe. H1: the DSR multiplicity math is per-period, never annualized."""
+    if returns is None:
+        return None
+    r = np.asarray(returns, dtype=np.float64)
+    r = r[np.isfinite(r)]
+    if r.size < 2:
+        return None
+    sd = r.std(ddof=1)
+    if not np.isfinite(sd) or sd <= 0:
+        return None
+    return float(r.mean() / sd)
+
+
+def _dsr_registry_inputs(period_sharpes: list[float]) -> tuple[int, float, bool]:
+    """Deflated-Sharpe multiplicity inputs (H1 / M25 / M24).
+
+    Returns ``(n_trials, trial_sr_variance, variance_defaulted)`` where N is the number of
+    gate-evaluable trials (those that produced a measurable per-period Sharpe) and the variance is
+    the per-period trial-Sharpe variance (ddof=1) — the two share one scope, so the expected-max-
+    Sharpe hurdle sits on the same footing as the per-period ``sr_hat`` the gate computes. When
+    fewer than two trials have been measured the variance cannot be estimated, so a floor is returned
+    with ``variance_defaulted=True`` (M24: explicit, not a magic-value sniff downstream). Replaces
+    the old ``(state.total_iterations, np.var(annualized_sharpes))`` which paired a padded iteration
+    count (errors/skips included) with an annualized variance ~252x too large."""
+    n = len(period_sharpes)
+    if n > 1:
+        return n, float(np.var(period_sharpes, ddof=1)), False
+    return n, 0.001, True
+
+
 def _train_split(window_start: str, window_end: str) -> str | None:
     """P2 select-on-train: the ISO date splitting the regime window into train=[ws, split] +
     hold-out=[split, we]. Returns None when the window is too short to carve an honest hold-out
@@ -270,14 +305,49 @@ def _train_split(window_start: str, window_end: str) -> str | None:
         return None
 
 
+def _spec_lookback(spec: dict) -> int:
+    """Largest integer lookback in a strategy spec's params — the warm-up length its indicators need."""
+    params = spec.get("params", {}) or {}
+    return int(max((v for v in params.values() if isinstance(v, (int, float)) and v > 1), default=0))
+
+
+def _prepare_with_warmup(data_agent, security_id: str, window_start: str, window_end: str, spec: dict):
+    """M26 — fetch the evaluation window WITH a warm-up prefix so indicators converge before it.
+
+    Returns ``(data, warmup_bars)`` where ``warmup_bars`` is the number of leading bars that precede
+    ``window_start`` (0 if the strategy needs no lookback or no prior data is available). Falls back to
+    a plain window fetch on any error. Pairs with C1's ``BacktestConfig.warmup_bars`` (via
+    ``executor.run(..., warmup_bars=...)``) so the short OOS / hold-out / decay slices aren't scored
+    on cold, unconverged indicators."""
+    import pandas as pd
+
+    lookback = _spec_lookback(spec)
+    if lookback <= 0:
+        return data_agent.prepare(security_id=security_id, window_start=window_start, window_end=window_end), 0
+    # Reach back generously in calendar days to cover the trading-bar lookback (weekends/holidays).
+    buffer_days = int(lookback * 1.7) + 10
+    try:
+        prep_start = (date.fromisoformat(window_start) - timedelta(days=buffer_days)).isoformat()
+    except Exception:
+        prep_start = window_start
+    data = data_agent.prepare(security_id=security_id, window_start=prep_start, window_end=window_end)
+    try:
+        warmup = int((data.index < pd.Timestamp(window_start)).sum())
+    except Exception:
+        warmup = 0
+    if warmup >= len(data) - 2:  # never let the warm-up swallow the scoring window
+        warmup = 0
+    return data, warmup
+
+
 def _slice_edge(spec, data_agent, executor, start, end, in_regime_sharpe) -> dict | None:
     """Run the SAME strategy on one out-of-regime slice; report retained edge. None if the slice is
     too short to mean anything."""
     if _days(start, end) < MIN_HOLD_DAYS:
         return None
     try:
-        data = data_agent.prepare(security_id=spec.get("security_id", ""), window_start=start, window_end=end)
-        m = executor.run({**spec, "window_start": start, "window_end": end}, data)
+        data, wb = _prepare_with_warmup(data_agent, spec.get("security_id", ""), start, end, spec)
+        m = executor.run({**spec, "window_start": start, "window_end": end}, data, warmup_bars=wb)
         oor_sharpe = float(m.get("sharpe_annual", 0.0))
     except Exception as exc:
         return {"note": "decay backtest failed", "error": str(exc), "period": [start, end]}
@@ -311,9 +381,8 @@ def _run_regime_holdout(spec, data_agent, executor, train_end, window_end) -> di
     if not train_end or _days(train_end, window_end) < MIN_HOLD_DAYS:
         return {"status": "unvalidated", "reason": "no usable hold-out slice"}
     try:
-        data = data_agent.prepare(security_id=spec.get("security_id", ""),
-                                  window_start=train_end, window_end=window_end)
-        m = executor.run({**spec, "window_start": train_end, "window_end": window_end}, data)
+        data, wb = _prepare_with_warmup(data_agent, spec.get("security_id", ""), train_end, window_end, spec)
+        m = executor.run({**spec, "window_start": train_end, "window_end": window_end}, data, warmup_bars=wb)
     except Exception as exc:
         return {"status": "unvalidated", "reason": "hold-out backtest failed", "error": str(exc)}
     n = int(m.get("n_trades", 0))
@@ -370,12 +439,11 @@ def _run_oos_lockbox(
         oos_spec["window_start"] = spec.get("window_end", "2024-01-01")
         oos_spec["window_end"] = "2025-12-31"
         try:
-            oos_data = data_agent.prepare(
-                security_id=state.current_asset,
-                window_start=oos_spec["window_start"],
-                window_end=oos_spec["window_end"],
+            oos_data, oos_wb = _prepare_with_warmup(
+                data_agent, state.current_asset,
+                oos_spec["window_start"], oos_spec["window_end"], oos_spec,
             )
-            oos_metrics = executor.run(oos_spec, oos_data)
+            oos_metrics = executor.run(oos_spec, oos_data, warmup_bars=oos_wb)
             return (
                 oos_metrics.get("sharpe_annual", 0.0) > 0
                 and oos_metrics.get("total_return", 0.0) > 0
@@ -435,8 +503,11 @@ async def research_loop(
         orchestrator.config.oos_enabled = oos_enabled
     max_iterations = state.budget.max_runs * 3 + 10        # T6 — backstop
 
-    # Track Sharpe values across iterations for DSR variance.
+    # Track Sharpe values across iterations. _sharpe_values stays ANNUALIZED for the
+    # "sharpe_distribution" telemetry; _period_sharpe_values is PER-PERIOD and feeds the DSR
+    # multiplicity variance + trial count (H1/M25 — the two must share per-period units and scope).
     _sharpe_values: list[float] = []
+    _period_sharpe_values: list[float] = []
 
     def emit(event_type: str, payload: dict | None = None):
         if on_event:
@@ -629,6 +700,9 @@ async def research_loop(
 
             sharpe = metrics.get("sharpe_annual", 0.0)
             _sharpe_values.append(sharpe)
+            _sr_period = _period_sharpe(returns)  # H1: per-period Sharpe for DSR multiplicity
+            if _sr_period is not None:
+                _period_sharpe_values.append(_sr_period)
             emit("execute", {
                 "strategy_hash": spec.get("strategy_hash", ""),
                 "sharpe_annual": sharpe,
@@ -637,8 +711,12 @@ async def research_loop(
 
             # ── Phase 5: GATES_EVALUATED ──
             state.phase = ResearchPhase.GATING
-            sr_variance = float(np.var(_sharpe_values)) if len(_sharpe_values) > 1 else 0.001
-            gatekeeper.update_registry_stats(state.total_iterations, sr_variance)
+            # H1/M25: per-period trial-Sharpe variance + a trial count that reflects only
+            # gate-evaluable trials (not state.total_iterations, which counts errors/skips).
+            _dsr_n_trials, sr_variance, _sr_defaulted = _dsr_registry_inputs(_period_sharpe_values)
+            gatekeeper.update_registry_stats(
+                _dsr_n_trials, sr_variance, variance_defaulted=_sr_defaulted
+            )
             try:
                 gate_report = gatekeeper.evaluate(
                     metrics=metrics,
@@ -726,6 +804,8 @@ async def research_loop(
                     total_return=metrics.get("total_return", 0.0),
                     max_drawdown=metrics.get("max_drawdown", 0.0),
                     n_trades=metrics.get("n_trades", 0),
+                    win_rate=metrics.get("win_rate", 0.0),           # P1-09
+                    profit_factor=metrics.get("profit_factor", 0.0),  # P1-09
                     gate_report_summary=gate_report,
                     critic_confidence=critique.get("confidence", "low"),
                     critique=critique,

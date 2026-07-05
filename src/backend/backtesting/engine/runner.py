@@ -16,10 +16,12 @@ from src.backend.backtesting.engine.exceptions import (
 )
 from src.backend.backtesting.engine.metrics import (
     TradeDetail,
+    benchmark_sharpe,
     calculate_calmar,
     calculate_profit_factor,
     calculate_sortino,
     extract_trades,
+    periods_per_year,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,13 @@ class BacktestConfig:
     # filter / size entry signals. See
     # :mod:`src.backend.backtesting.event_gate`.
     event_gate: "EventGateConfig | None" = None  # noqa: F821 -- forward ref
+    # C1 (QUANT-REVIEW-2026-07-03) — warm-up prefix length. When > 0 the first ``warmup_bars`` rows
+    # are a burn-in region: indicators converge on them, but the strategy is prevented from opening
+    # positions until ``data.index[warmup_bars]`` (StrategyBase honours ``_trade_start``), and the
+    # reported per-bar metrics are recomputed over the post-warm-up window so the flat burn-in does
+    # not dilute them. Used by walk-forward / OOS / hold-out so a strategy isn't "validated" on cold,
+    # unconverged indicators.
+    warmup_bars: int = 0
 
 
 # Forward-reference resolver (kept at module level so the dataclass annotation
@@ -237,6 +246,14 @@ def run_backtest(
         strategy_class._event_gate_config = None  # type: ignore[attr-defined]
         strategy_class._event_gate_symbol = None  # type: ignore[attr-defined]
 
+    # C1 — warm-up trade mask: suppress entries until the first post-warm-up bar so indicators
+    # converge on the prefix without in-sample trades leaking into the evaluation window. Set on every
+    # run (None when no warm-up) so a stale value can't leak across reused strategy classes.
+    if config.warmup_bars > 0 and len(bt_data) > config.warmup_bars:
+        strategy_class._trade_start = pd.Timestamp(bt_data.index[config.warmup_bars])  # type: ignore[attr-defined]
+    else:
+        strategy_class._trade_start = None  # type: ignore[attr-defined]
+
     try:
         bt = Backtest(
             bt_data,
@@ -245,6 +262,11 @@ def run_backtest(
             commission=config.commission,
             exclusive_orders=config.exclusive_orders,
             trade_on_close=config.trade_on_close,
+            # H7 (QUANT-REVIEW-2026-07-03): close trades still open on the last bar so they are
+            # included in # Trades / Win Rate / Profit Factor. Without this, a position held to the
+            # end contributes its PnL to the equity/return but is dropped from every trade stat,
+            # making trade_count inconsistent with total_return (and a fully-invested run report 0 trades).
+            finalize_trades=True,
         )
         stats = bt.run()
     except Exception as exc:
@@ -261,6 +283,12 @@ def run_backtest(
 
     result = _parse_stats(stats)
 
+    # C1/M3 — recompute per-bar metrics over the post-warm-up window only (the flat burn-in region
+    # would otherwise dilute the Sharpe/Sortino and understate the window return/drawdown). Pass the
+    # window DatetimeIndex so the reslice uses the interval-aware geometric estimator (P1-03/C2/M5).
+    if config.warmup_bars > 0:
+        result = _reslice_to_window(result, config.warmup_bars, bt_data.index)
+
     # ATS-1714 — record successful completion.
     if _registry and run_id:
         try:
@@ -273,7 +301,9 @@ def run_backtest(
     # ATS-1718 — auto-compute buy-and-hold benchmark for every run.
     try:
         from src.backend.backtesting.benchmarks.buy_hold import compute_buy_hold
-        bh = compute_buy_hold(bt_data)
+        # C1 — benchmark the window, not the warm-up prefix, so strategy-vs-benchmark stays comparable.
+        bh_data = bt_data.iloc[config.warmup_bars:] if config.warmup_bars > 0 else bt_data
+        bh = compute_buy_hold(bh_data)
         result.buy_hold_return = bh.total_return
     except Exception:
         logger.debug("Buy-and-hold benchmark computation skipped", exc_info=True)
@@ -297,6 +327,40 @@ def run_backtest(
             "the strategy never generated a signal in this date range. "
             "Try a wider window or different parameters."
         )
+    return result
+
+
+def _reslice_to_window(result: BacktestResult, warmup_bars: int, window_index=None) -> BacktestResult:
+    """C1/M3 — recompute per-bar metrics over the post-warm-up window only.
+
+    After a warm-up run (indicators converge on the prefix; ``StrategyBase`` suppresses entries until
+    the window), the equity curve still carries a flat burn-in region that would dilute the per-bar
+    Sharpe/Sortino and understate the window return/drawdown. Recompute those from the window slice.
+    Trades are already window-only (entries were masked during the prefix), so trade-derived metrics
+    (trade_count / win_rate / profit_factor) are left intact. P1-03/C2/M5: the windowed Sharpe uses the
+    SAME geometric/compounded, interval-aware estimator (``benchmark_sharpe``) as the non-warm-up
+    strategy Sharpe and the benchmark — not a separate arithmetic one — so all three stay on one scale.
+    """
+    eq_full = result.equity_curve
+    if warmup_bars <= 0 or len(eq_full) <= warmup_bars + 2:
+        return result
+    win = eq_full[warmup_bars:]
+    win_idx = window_index[warmup_bars:] if (window_index is not None and len(window_index) == len(eq_full)) else None
+    eq = pd.Series(win, index=win_idx) if win_idx is not None else pd.Series(win, dtype=float).reset_index(drop=True)
+    result.equity_curve = list(win)
+    if eq.iloc[0] > 0:
+        result.total_return = float(eq.iloc[-1] / eq.iloc[0] - 1.0)
+    result.sharpe_ratio = benchmark_sharpe(eq)  # geometric, interval-aware — one scale with the benchmark
+    ppy = periods_per_year(eq.index) if isinstance(eq.index, pd.DatetimeIndex) else 252.0
+    run_max = eq.cummax()
+    result.max_drawdown = float((1.0 - eq / run_max).max())
+    result.sortino_ratio = calculate_sortino(eq, periods_per_year=ppy)
+    # Keep Calmar consistent with the resliced window (was left on the full flat-diluted values).
+    if isinstance(eq.index, pd.DatetimeIndex) and len(eq) >= 2:
+        years = max((eq.index[-1] - eq.index[0]).days, 1) / 365.25
+    else:
+        years = len(eq) / ppy
+    result.calmar_ratio = calculate_calmar(result.total_return, result.max_drawdown, years)
     return result
 
 
@@ -331,10 +395,12 @@ def _parse_stats(stats: pd.Series) -> BacktestResult:
 
     # --- Equity curve --------------------------------------------------- #
     equity_values: list[float] = []
+    ppy = 252.0  # C2 — interval-aware annualization for the derived (Sortino) metrics
     try:
         eq_df: pd.DataFrame = stats["_equity_curve"]
         if eq_df is not None and "Equity" in eq_df.columns:
             equity_values = eq_df["Equity"].tolist()
+            ppy = periods_per_year(eq_df.index)
     except (KeyError, TypeError):
         pass
 
@@ -344,7 +410,7 @@ def _parse_stats(stats: pd.Series) -> BacktestResult:
     trade_details = extract_trades(stats)
 
     # --- Derived metrics ------------------------------------------------ #
-    sortino = calculate_sortino(equity_series)
+    sortino = calculate_sortino(equity_series, periods_per_year=ppy)
 
     # Duration in years for Calmar
     try:

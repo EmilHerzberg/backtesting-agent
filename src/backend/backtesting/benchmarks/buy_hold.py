@@ -52,13 +52,11 @@ def compute_buy_hold(df: pd.DataFrame) -> BenchmarkResult:
     # Total return.
     total_return = float(close.iloc[-1] / close.iloc[0] - 1)
 
-    # Annualized Sharpe (assume 252 trading days, risk-free = 0).
-    mean_r = np.mean(returns)
-    std_r = np.std(returns, ddof=1)
-    if std_r > 0:
-        annualized_sharpe = float(mean_r / std_r * math.sqrt(252))
-    else:
-        annualized_sharpe = 0.0
+    # C2/M5/M6: annualized Sharpe computed the same way (interval-aware, geometric/compounded) that
+    # backtesting.py computes the strategy Sharpe, so the two are comparable in the benchmark gate.
+    from src.backend.backtesting.engine.metrics import benchmark_sharpe
+
+    annualized_sharpe = benchmark_sharpe(close)
 
     # Max drawdown.
     cum = (1 + pd.Series(returns)).cumprod()

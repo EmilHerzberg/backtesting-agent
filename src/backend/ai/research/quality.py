@@ -11,9 +11,9 @@ from __future__ import annotations
 
 from typing import Any
 
-# Mirror of DeflatedSharpeGate.PROVISIONAL_BELOW + its defaulted variance (deflated_sharpe.py).
+# Mirror of DeflatedSharpeGate.PROVISIONAL_BELOW (deflated_sharpe.py). The gate now emits an explicit
+# ``sr_variance_defaulted`` flag, so we no longer sniff the magic default variance value (M24).
 _PROVISIONAL_BELOW = 20
-_DEFAULT_SR_VARIANCE = 0.001
 
 
 def _gate(gate_report: dict[str, Any] | None, gate_id: str) -> dict[str, Any]:
@@ -64,7 +64,7 @@ def quality_summary(
             bool(dsr_d.get("provisional"))
             or trials < _PROVISIONAL_BELOW
             or sr_var is None
-            or abs(float(sr_var) - _DEFAULT_SR_VARIANCE) < 1e-9
+            or bool(dsr_d.get("sr_variance_defaulted"))  # M24: explicit flag, not a magic-value sniff
         )
         dsr = {"value": _num(dsr_d.get("dsr"), 2), "trials": trials, "provisional": provisional}
 

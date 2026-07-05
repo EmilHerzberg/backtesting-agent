@@ -50,8 +50,10 @@ class RSIIndicator(BacktestIndicator):
         gain = delta.where(delta > 0, 0.0)
         loss = (-delta).where(delta < 0, 0.0)
 
-        avg_gain = gain.ewm(alpha=1.0 / self._period, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1.0 / self._period, adjust=False).mean()
+        # H12: min_periods so the EWM is NaN (not a garbage value) until it has converged — otherwise
+        # RSI emits directional signals from bar 1 on an unwarmed average.
+        avg_gain = gain.ewm(alpha=1.0 / self._period, adjust=False, min_periods=self._period).mean()
+        avg_loss = loss.ewm(alpha=1.0 / self._period, adjust=False, min_periods=self._period).mean()
 
         rs = avg_gain / avg_loss.replace(0, np.nan)
         rsi = 100.0 - 100.0 / (1.0 + rs)

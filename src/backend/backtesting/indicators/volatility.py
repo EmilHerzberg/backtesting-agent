@@ -95,7 +95,8 @@ class ATRIndicator(BacktestIndicator):
         tr3 = (low - close.shift()).abs()
         true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-        atr = true_range.ewm(alpha=1.0 / self._period, adjust=False).mean()
+        # H12: min_periods so ATR is NaN until converged.
+        atr = true_range.ewm(alpha=1.0 / self._period, adjust=False, min_periods=self._period).mean()
         return atr
 
     def signal(self, df: pd.DataFrame) -> pd.Series:
@@ -148,17 +149,20 @@ class KeltnerChannelsIndicator(BacktestIndicator):
         tr2 = (high - close.shift()).abs()
         tr3 = (low - close.shift()).abs()
         true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        return true_range.ewm(alpha=1.0 / self._atr_period, adjust=False).mean()
+        # H12: min_periods so ATR is NaN until converged.
+        return true_range.ewm(
+            alpha=1.0 / self._atr_period, adjust=False, min_periods=self._atr_period
+        ).mean()
 
     def compute(self, df: pd.DataFrame) -> pd.Series:
         """Return the middle line (EMA) as the primary value."""
         self._validate_ohlcv(df)
-        return df["Close"].ewm(span=self._ema_period, adjust=False).mean()
+        return df["Close"].ewm(span=self._ema_period, adjust=False, min_periods=self._ema_period).mean()
 
     def compute_full(self, df: pd.DataFrame) -> pd.DataFrame:
         """Return DataFrame with middle, upper, lower channels."""
         self._validate_ohlcv(df)
-        middle = df["Close"].ewm(span=self._ema_period, adjust=False).mean()
+        middle = df["Close"].ewm(span=self._ema_period, adjust=False, min_periods=self._ema_period).mean()
         atr = self._atr(df)
         upper = middle + self._multiplier * atr
         lower = middle - self._multiplier * atr
@@ -174,6 +178,8 @@ class KeltnerChannelsIndicator(BacktestIndicator):
         signals = pd.Series(Signal.HOLD, index=df.index)
         signals[close > full["upper"]] = Signal.BUY
         signals[close < full["lower"]] = Signal.SELL
+        # H12: no breakout signal while the EMA/ATR channel is still warming up.
+        signals[full["middle"].isna() | full["upper"].isna()] = Signal.HOLD
         return signals
 
 

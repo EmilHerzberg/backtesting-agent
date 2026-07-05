@@ -141,6 +141,11 @@ async def run_research(
     train_ws, train_we = (eff_ws, _split) if _split else (eff_ws, eff_we)
 
     # ── Build state ───────────────────────────────────────────
+    # C3/M50 — parse the user's free-text goal into structured numeric criteria so goal completion is
+    # decided on whether candidates actually meet the user's Sharpe/drawdown/… thresholds, not a raw
+    # candidate count.
+    from src.backend.ai.goals.criteria import parse_criteria
+    _criteria = parse_criteria(goal)["criteria"]
     state = ResearchState(
         goal=GoalBrief(
             goal_text=goal,
@@ -150,6 +155,7 @@ async def run_research(
             max_eur=max_eur,
             max_seconds=max_seconds,
             target_candidates=target_candidates,
+            criteria=_criteria,
         ),
         budget=Budget(
             max_runs=max_runs,

@@ -30,7 +30,8 @@ class _FakeExec:
         self._m = metrics
         self.windows = []
 
-    def run(self, spec, data):
+    def run(self, spec, data, *, warmup_bars=0):
+        # M26: executor.run now takes an optional warm-up-bar count for the OOS/hold-out/decay slices.
         self.windows.append((spec["window_start"], spec["window_end"]))
         return self._m
 

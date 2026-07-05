@@ -48,12 +48,16 @@ class ResearchExecutor:
         self._cash = cash
         self._commission = commission
 
-    def run(self, spec: dict[str, Any], data: pd.DataFrame) -> dict[str, Any]:
+    def run(self, spec: dict[str, Any], data: pd.DataFrame, *, warmup_bars: int = 0) -> dict[str, Any]:
         """Execute a backtest and return a flat metrics dict.
 
         Args:
             spec: Strategy spec with template_id, params, etc.
             data: OHLCV DataFrame.
+            warmup_bars: M26/C1 — number of leading rows that are a warm-up prefix (indicators
+                converge on them, no trades open, and the reported metrics are windowed past them).
+                Used for the short OOS / hold-out / decay slices so they aren't scored on cold
+                indicators.
 
         Returns:
             Dict with sharpe_annual, total_return, max_drawdown, n_trades,
@@ -80,6 +84,7 @@ class ResearchExecutor:
             commission=self._commission,
             exclusive_orders=True,
             trade_on_close=False,
+            warmup_bars=warmup_bars,
         )
 
         result = run_backtest(config)
@@ -94,12 +99,13 @@ class ResearchExecutor:
         bh_sharpe = 0.0
         bh_max_dd = 0.0
         if len(returns) > 1:
-            bh_returns = np.diff(data["Close"].values) / data["Close"].values[:-1]
-            if len(bh_returns) > 0 and bh_returns.std() > 0:
-                bh_sharpe = float(bh_returns.mean() / bh_returns.std() * np.sqrt(252))
-                bh_cummax = np.maximum.accumulate(np.cumprod(1 + bh_returns))
-                bh_drawdowns = (np.cumprod(1 + bh_returns) - bh_cummax) / bh_cummax
-                bh_max_dd = float(bh_drawdowns.min()) if len(bh_drawdowns) > 0 else 0.0
+            # M6/C2: single benchmark source — compute_buy_hold uses the interval-aware, strategy-
+            # matched Sharpe estimator (no ad-hoc ddof=0 * sqrt(252) duplicate). Window past warm-up.
+            from src.backend.backtesting.benchmarks.buy_hold import compute_buy_hold
+            bh_df = data.iloc[warmup_bars:] if warmup_bars > 0 else data
+            _bh = compute_buy_hold(bh_df)
+            bh_sharpe = _bh.annualized_sharpe
+            bh_max_dd = _bh.max_drawdown
 
         return {
             "sharpe_annual": result.sharpe_ratio,
@@ -119,5 +125,5 @@ class ResearchExecutor:
             "template_id": template_id,
             "params": params,
             "commission": self._commission,
-            "ohlcv_df": data,
+            "ohlcv_df": data.iloc[warmup_bars:] if warmup_bars > 0 else data,
         }
