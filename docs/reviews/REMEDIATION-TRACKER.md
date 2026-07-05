@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **1 / 95** (H7).
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **3 / 95** (H7, H1, M25).
 
 **Board mirror (local `tickets/`, staged for Jira — token was expired 2026-06-18):** Epic **ATS-1787**. Stories: Phase 0 = ATS-1788, Phase 1 = ATS-1789, Phase 2 = ATS-1790, Phase 3 = ATS-1791, Phase 4 = ATS-1792, Phase 5 = ATS-1793. Cluster sub-tasks = ATS-1794…1812 (one per cluster below, in order). Update ticket status via `board.py status <KEY> <status>` (auto-pushes to Jira when the token is valid).
 
@@ -30,11 +30,11 @@
 ### Cluster 1A — Deflated Sharpe gate (fix together)
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| H1 | High | mech | OPEN | | Annualized variance → per-period formula. Found by 6 reviewers. |
-| H2 | High | mech | OPEN | | N from cross-run registry, not per-run counter |
-| M24 | Med | mech | OPEN | | `sr_variance_defaulted` flag; floor in per-bar units |
-| M25 | Med | mech | OPEN | | n_trials excludes no-metric iters; per-asset vs session variance |
-| N6 | note | mech | BACKLOG | | ddof mismatch prod vs test (fold into 1A) |
+| H1 | High | mech | DONE (review) | `tests/unit/ai/research/test_dsr_inputs_h1_m25.py` | Per-period trial-Sharpe variance now fed (loop `_period_sharpe`/`_dsr_registry_inputs`); annualized var no longer collapses the gate. Found by 6 reviewers. |
+| H2 | High | mech | PARTIAL | `…test_dsr_inputs_h1_m25.py` | Within-run N corrected (now counts measured trials, not `total_iterations`). Cross-run registry accumulation + re-deflate-at-report still OPEN — needs the persistence/registry path (in-memory loop has no cross-run state). |
+| M24 | Med | mech | OPEN | | `sr_variance_defaulted` explicit flag instead of magic 0.001 float-equality; per-bar floor. Touches GateContext + deflated gate + quality.py. |
+| M25 | Med | mech | DONE (review) | `…test_dsr_inputs_h1_m25.py` | n_trials = count of gate-evaluable trials; variance/N share per-period scope; ddof=1. |
+| N6 | note | mech | DONE | `…test_dsr_inputs_h1_m25.py` | ddof=1 applied in `_dsr_registry_inputs` (folded into 1A). |
 
 ### Cluster 1B — Indicator warm-up buffers
 | ID | Sev | Bucket | Status | Test | Note |

@@ -255,6 +255,36 @@ def _env_bounds() -> tuple[str, str]:
     return "2010-01-01", datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _period_sharpe(returns) -> float | None:
+    """Per-period (e.g. daily) Sharpe of a return series — the SAME quantity the Deflated-Sharpe
+    gate uses as its ``sr_hat`` (mean / std, ddof=1). Returns ``None`` for a series too short or flat
+    to have a defined Sharpe. H1: the DSR multiplicity math is per-period, never annualized."""
+    if returns is None:
+        return None
+    r = np.asarray(returns, dtype=np.float64)
+    r = r[np.isfinite(r)]
+    if r.size < 2:
+        return None
+    sd = r.std(ddof=1)
+    if not np.isfinite(sd) or sd <= 0:
+        return None
+    return float(r.mean() / sd)
+
+
+def _dsr_registry_inputs(period_sharpes: list[float]) -> tuple[int, float]:
+    """Deflated-Sharpe multiplicity inputs (H1 / M25).
+
+    Returns ``(n_trials, trial_sr_variance)`` where N is the number of gate-evaluable trials (those
+    that produced a measurable per-period Sharpe) and the variance is the per-period trial-Sharpe
+    variance (ddof=1) — the two share one scope, so the expected-max-Sharpe hurdle sits on the same
+    footing as the per-period ``sr_hat`` the gate computes. Replaces the old
+    ``(state.total_iterations, np.var(annualized_sharpes))`` which paired a padded iteration count
+    (errors/skips included) with an annualized variance ~252x too large."""
+    n = len(period_sharpes)
+    variance = float(np.var(period_sharpes, ddof=1)) if n > 1 else 0.001
+    return n, variance
+
+
 def _train_split(window_start: str, window_end: str) -> str | None:
     """P2 select-on-train: the ISO date splitting the regime window into train=[ws, split] +
     hold-out=[split, we]. Returns None when the window is too short to carve an honest hold-out
@@ -435,8 +465,11 @@ async def research_loop(
         orchestrator.config.oos_enabled = oos_enabled
     max_iterations = state.budget.max_runs * 3 + 10        # T6 — backstop
 
-    # Track Sharpe values across iterations for DSR variance.
+    # Track Sharpe values across iterations. _sharpe_values stays ANNUALIZED for the
+    # "sharpe_distribution" telemetry; _period_sharpe_values is PER-PERIOD and feeds the DSR
+    # multiplicity variance + trial count (H1/M25 — the two must share per-period units and scope).
     _sharpe_values: list[float] = []
+    _period_sharpe_values: list[float] = []
 
     def emit(event_type: str, payload: dict | None = None):
         if on_event:
@@ -629,6 +662,9 @@ async def research_loop(
 
             sharpe = metrics.get("sharpe_annual", 0.0)
             _sharpe_values.append(sharpe)
+            _sr_period = _period_sharpe(returns)  # H1: per-period Sharpe for DSR multiplicity
+            if _sr_period is not None:
+                _period_sharpe_values.append(_sr_period)
             emit("execute", {
                 "strategy_hash": spec.get("strategy_hash", ""),
                 "sharpe_annual": sharpe,
@@ -637,8 +673,10 @@ async def research_loop(
 
             # ── Phase 5: GATES_EVALUATED ──
             state.phase = ResearchPhase.GATING
-            sr_variance = float(np.var(_sharpe_values)) if len(_sharpe_values) > 1 else 0.001
-            gatekeeper.update_registry_stats(state.total_iterations, sr_variance)
+            # H1/M25: per-period trial-Sharpe variance + a trial count that reflects only
+            # gate-evaluable trials (not state.total_iterations, which counts errors/skips).
+            _dsr_n_trials, sr_variance = _dsr_registry_inputs(_period_sharpe_values)
+            gatekeeper.update_registry_stats(_dsr_n_trials, sr_variance)
             try:
                 gate_report = gatekeeper.evaluate(
                     metrics=metrics,
