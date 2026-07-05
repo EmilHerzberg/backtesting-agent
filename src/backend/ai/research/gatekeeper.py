@@ -141,6 +141,7 @@ class ResearchGatekeeper:
             metrics={
                 "n_trades": metrics.get("n_trades", 0),
                 "sharpe_annual": metrics.get("sharpe_annual", 0.0),
+                "lagged_sharpe_annual": metrics.get("lagged_sharpe_annual"),  # M23: producer wired (None → provisional)
                 "total_return": metrics.get("total_return", 0.0),
                 "max_drawdown": metrics.get("max_drawdown", 0.0),
                 "exposure_time": metrics.get("exposure_time", 0.0),

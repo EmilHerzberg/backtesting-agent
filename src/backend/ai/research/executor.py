@@ -38,6 +38,52 @@ def _ensure_registry() -> dict[str, type]:
     return _TEMPLATE_REGISTRY
 
 
+def _lagged_sharpe_annual(
+    data: pd.DataFrame, trades: list, warmup_bars: int, sharpe_annual: float
+) -> float | None:
+    """M23 — Sharpe under +1 bar of execution lag (the LagFragilityGate's missing producer).
+
+    Reconstructs the per-bar position the strategy actually held (from its trades), then re-derives the
+    P&L with every fill delayed by one bar (position established one bar later: ``pos.shift(1)·ret``).
+    The reconstructed base and lagged Sharpe share one estimator, so their RATIO is a clean
+    execution-lag fragility measure; that ratio is mapped onto the reported (backtesting.py) Sharpe
+    scale the gate compares against. Returns ``None`` when there is no reconstructable position (the
+    gate then stays honestly provisional) — it never fabricates a pass. Cheap: no second backtest.
+    """
+    from src.backend.backtesting.engine.metrics import annualized_sharpe, periods_per_year
+
+    try:
+        if not trades or "Close" not in data.columns:
+            return None
+        idx = data.index[warmup_bars:] if warmup_bars > 0 else data.index
+        close = (data["Close"].iloc[warmup_bars:] if warmup_bars > 0 else data["Close"]).to_numpy(dtype=np.float64)
+        if len(idx) < 3 or len(close) != len(idx):
+            return None
+
+        ts = pd.DatetimeIndex(idx).values
+        pos = np.zeros(len(idx), dtype=np.float64)
+        for t in trades:
+            side = 1.0 if str(getattr(t, "side", "long")).lower() == "long" else -1.0
+            try:
+                e = np.datetime64(pd.Timestamp(t.entry_time))
+                x = np.datetime64(pd.Timestamp(t.exit_time))
+            except Exception:
+                continue
+            pos[(ts >= e) & (ts < x)] = side        # position held on bars in [entry, exit)
+
+        ret = np.diff(close) / close[:-1]            # ret[j] = return of bar j+1
+        base_r = pos[1:] * ret                       # position held during bar j+1 earns its return
+        lag_r = pos[:-1] * ret                       # one extra bar of execution delay
+        ppy = periods_per_year(idx)
+        base_s = annualized_sharpe(base_r, ppy)
+        lag_s = annualized_sharpe(lag_r, ppy)
+        if not np.isfinite(base_s) or abs(base_s) < 1e-9:
+            return None                              # no reconstructable edge → provisional (honest)
+        return float(sharpe_annual) * (lag_s / base_s)
+    except Exception:
+        return None
+
+
 class ResearchExecutor:
     """Wraps the backtesting engine for the research loop.
 
@@ -107,8 +153,13 @@ class ResearchExecutor:
             bh_sharpe = _bh.annualized_sharpe
             bh_max_dd = _bh.max_drawdown
 
+        # M23: produce the +1-bar lag-fragility Sharpe the LagFragilityGate needs (it silently
+        # provisional-passed without it). Windowed past warm-up, same as the reported metrics.
+        lagged_sharpe = _lagged_sharpe_annual(data, result.trades or [], warmup_bars, result.sharpe_ratio)
+
         return {
             "sharpe_annual": result.sharpe_ratio,
+            "lagged_sharpe_annual": lagged_sharpe,   # M23 — None when unreconstructable (gate stays provisional)
             "total_return": result.total_return,
             "max_drawdown": -abs(result.max_drawdown),
             "n_trades": result.trade_count,
