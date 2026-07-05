@@ -301,6 +301,7 @@ class TestResearchLoopE2E:
         # OOS runs automatically in the candidate branch (C1); target=1 → done on first PASS.
         lockbox = MagicMock()
         lockbox.ensure_budget = MagicMock()
+        lockbox.get_result.return_value = None  # H16: no prior verdict → run the evaluation
         outcome = MagicMock()
         outcome.value = "PASS"
         lockbox.evaluate.return_value = outcome

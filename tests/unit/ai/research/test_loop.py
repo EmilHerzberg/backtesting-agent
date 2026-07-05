@@ -441,6 +441,7 @@ class TestOOSLockboxIntegration:
 
         lockbox = MagicMock()
         lockbox.ensure_budget = MagicMock()
+        lockbox.get_result.return_value = None  # H16: no prior verdict → run the evaluation
         outcome_mock = MagicMock()
         outcome_mock.value = "PASS"
         lockbox.evaluate.return_value = outcome_mock
@@ -480,6 +481,7 @@ class TestOOSLockboxIntegration:
 
         lockbox = MagicMock()
         lockbox.ensure_budget = MagicMock()
+        lockbox.get_result.return_value = None  # H16: no prior verdict → run the evaluation
         outcome_mock = MagicMock()
         outcome_mock.value = "FAIL"
         lockbox.evaluate.return_value = outcome_mock

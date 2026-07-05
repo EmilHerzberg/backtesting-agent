@@ -1,7 +1,9 @@
 """ATS-1780/1781 — OOS Lockbox service.
 
-Separate evaluation that returns PASS/FAIL only. No metrics leaked.
-Budget consumed per evaluation. Terminal outcome cannot be overwritten.
+Separate evaluation that returns PASS / FAIL / UNEVALUATED only. No metrics leaked.
+Budget consumed per *terminal* evaluation (PASS/FAIL); an UNEVALUATED outcome (the
+backtest could not be run, or the sample was too thin to judge) spends no budget and
+writes no terminal row, so it can be retried. Terminal outcome cannot be overwritten.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from sqlalchemy.orm import DeclarativeBase, Session
 class OOSOutcome(StrEnum):
     PASS = "PASS"
     FAIL = "FAIL"
+    UNEVALUATED = "UNEVALUATED"  # H17: could not be evaluated / too few trades — NOT terminal, retryable
 
 
 class LockboxBase(DeclarativeBase):
@@ -86,60 +89,88 @@ class OOSLockboxService:
                 return 0
             return row.budget_total - row.budget_used
 
+    def get_result(self, strategy_hash: str) -> OOSOutcome | None:
+        """Return the stored *terminal* outcome for a strategy, or None if never evaluated.
+
+        H16: lets a re-run recover the prior verdict instead of re-raising
+        AlreadyEvaluatedError (which the caller swallowed, leaving the candidate PENDING
+        forever). UNEVALUATED never persists a row, so it correctly reads back as None and
+        is retried.
+        """
+        with Session(self._engine) as session:
+            row = session.get(OOSResultRow, strategy_hash)
+            return OOSOutcome(row.outcome) if row else None
+
+    @staticmethod
+    def _coerce(raw: Any) -> OOSOutcome:
+        """Map the callable's return to an outcome. Accepts an OOSOutcome, its string value, or a
+        bool for backward compatibility (True→PASS, False→FAIL)."""
+        if isinstance(raw, OOSOutcome):
+            return raw
+        if isinstance(raw, str):
+            return OOSOutcome(raw)
+        return OOSOutcome.PASS if raw else OOSOutcome.FAIL
+
     def evaluate(
         self,
         token: PromotionToken,
         *,
-        run_oos_backtest: Any = None,  # callable that returns bool (pass/fail)
+        run_oos_backtest: Any = None,  # callable -> OOSOutcome (or bool for back-compat)
     ) -> OOSOutcome:
         """Run the OOS evaluation.
 
         Args:
             token: Promotion token from human approval.
-            run_oos_backtest: Callable that runs the actual OOS backtest
-                internally and returns True (pass) or False (fail).
-                The lockbox calls this but NEVER exposes its internals.
+            run_oos_backtest: Callable that runs the actual OOS backtest internally and returns
+                an ``OOSOutcome`` (PASS / FAIL / UNEVALUATED) — or a bool for back-compat. The
+                lockbox calls this but NEVER exposes its internals.
 
         Returns:
-            OOSOutcome.PASS or OOSOutcome.FAIL — nothing else.
+            OOSOutcome.PASS, .FAIL, or .UNEVALUATED — nothing else.
+
+        Semantics:
+            * PASS / FAIL are terminal: they consume one unit of budget and write a result row
+              (atomic). A terminal result cannot be overwritten.
+            * UNEVALUATED (callable returned UNEVALUATED, or raised — H17) is NOT terminal: no
+              budget is spent and no row is written, so the candidate can be evaluated later once
+              the data outage clears or a larger sample exists. An exception body is swallowed so
+              no OOS metrics can leak through its message.
 
         Raises:
             BudgetExhaustedError: No remaining OOS budget for this lineage.
             AlreadyEvaluatedError: This strategy_hash already has a terminal result.
         """
         with Session(self._engine) as session:
-            # Check for existing terminal result.
+            # A terminal result is final — never re-run it.
             existing = session.get(OOSResultRow, token.strategy_hash)
             if existing:
                 raise AlreadyEvaluatedError(
                     f"Strategy {token.strategy_hash[:16]}... already evaluated: {existing.outcome}"
                 )
 
-            # Check and consume budget.
+            # Budget must be available up front (fail fast) — but is only *consumed* below on a
+            # terminal outcome, so an infra failure never burns a scarce OOS evaluation.
             budget = session.get(OOSBudgetRow, token.lineage_id)
             if not budget or budget.budget_used >= budget.budget_total:
                 raise BudgetExhaustedError(
                     f"OOS budget exhausted for lineage {token.lineage_id}"
                 )
 
-            budget.budget_used += 1
-
             # Run the actual OOS evaluation (opaque to caller).
-            # CRITICAL: catch ALL exceptions from the callable to prevent
-            # metrics leaking via exception messages. Convert to FAIL.
+            # H17: an exception means we COULD NOT evaluate — that is UNEVALUATED, never a terminal
+            # FAIL. Swallow the body (it may embed OOS metrics) but do not consume budget or record.
             try:
-                if run_oos_backtest is not None:
-                    passed = run_oos_backtest()
-                else:
-                    passed = False
+                raw = run_oos_backtest() if run_oos_backtest is not None else OOSOutcome.FAIL
             except Exception:
-                # Exception may contain OOS metrics in its message —
-                # swallow it completely. The lockbox returns PASS/FAIL only.
-                passed = False
+                return OOSOutcome.UNEVALUATED
 
-            outcome = OOSOutcome.PASS if passed else OOSOutcome.FAIL
+            outcome = self._coerce(raw)
+            if outcome is OOSOutcome.UNEVALUATED:
+                # Too thin to judge — not a failure. No budget, no row: retryable later.
+                return OOSOutcome.UNEVALUATED
 
-            # Record terminal result (atomic with budget consume).
+            # Terminal (PASS/FAIL): consume budget and record the result atomically.
+            budget.budget_used += 1
             session.add(OOSResultRow(
                 strategy_hash=token.strategy_hash,
                 lineage_id=token.lineage_id,
