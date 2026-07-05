@@ -57,7 +57,7 @@ class StrategistProtocol(Protocol):
 class ExecutorProtocol(Protocol):
     """Deterministic backtest execution."""
 
-    def run(self, spec: dict[str, Any], data: Any) -> dict[str, Any]:
+    def run(self, spec: dict[str, Any], data: Any, *, warmup_bars: int = 0) -> dict[str, Any]:
         """Run a backtest and return metrics dict."""
         ...
 
@@ -305,14 +305,49 @@ def _train_split(window_start: str, window_end: str) -> str | None:
         return None
 
 
+def _spec_lookback(spec: dict) -> int:
+    """Largest integer lookback in a strategy spec's params — the warm-up length its indicators need."""
+    params = spec.get("params", {}) or {}
+    return int(max((v for v in params.values() if isinstance(v, (int, float)) and v > 1), default=0))
+
+
+def _prepare_with_warmup(data_agent, security_id: str, window_start: str, window_end: str, spec: dict):
+    """M26 — fetch the evaluation window WITH a warm-up prefix so indicators converge before it.
+
+    Returns ``(data, warmup_bars)`` where ``warmup_bars`` is the number of leading bars that precede
+    ``window_start`` (0 if the strategy needs no lookback or no prior data is available). Falls back to
+    a plain window fetch on any error. Pairs with C1's ``BacktestConfig.warmup_bars`` (via
+    ``executor.run(..., warmup_bars=...)``) so the short OOS / hold-out / decay slices aren't scored
+    on cold, unconverged indicators."""
+    import pandas as pd
+
+    lookback = _spec_lookback(spec)
+    if lookback <= 0:
+        return data_agent.prepare(security_id=security_id, window_start=window_start, window_end=window_end), 0
+    # Reach back generously in calendar days to cover the trading-bar lookback (weekends/holidays).
+    buffer_days = int(lookback * 1.7) + 10
+    try:
+        prep_start = (date.fromisoformat(window_start) - timedelta(days=buffer_days)).isoformat()
+    except Exception:
+        prep_start = window_start
+    data = data_agent.prepare(security_id=security_id, window_start=prep_start, window_end=window_end)
+    try:
+        warmup = int((data.index < pd.Timestamp(window_start)).sum())
+    except Exception:
+        warmup = 0
+    if warmup >= len(data) - 2:  # never let the warm-up swallow the scoring window
+        warmup = 0
+    return data, warmup
+
+
 def _slice_edge(spec, data_agent, executor, start, end, in_regime_sharpe) -> dict | None:
     """Run the SAME strategy on one out-of-regime slice; report retained edge. None if the slice is
     too short to mean anything."""
     if _days(start, end) < MIN_HOLD_DAYS:
         return None
     try:
-        data = data_agent.prepare(security_id=spec.get("security_id", ""), window_start=start, window_end=end)
-        m = executor.run({**spec, "window_start": start, "window_end": end}, data)
+        data, wb = _prepare_with_warmup(data_agent, spec.get("security_id", ""), start, end, spec)
+        m = executor.run({**spec, "window_start": start, "window_end": end}, data, warmup_bars=wb)
         oor_sharpe = float(m.get("sharpe_annual", 0.0))
     except Exception as exc:
         return {"note": "decay backtest failed", "error": str(exc), "period": [start, end]}
@@ -346,9 +381,8 @@ def _run_regime_holdout(spec, data_agent, executor, train_end, window_end) -> di
     if not train_end or _days(train_end, window_end) < MIN_HOLD_DAYS:
         return {"status": "unvalidated", "reason": "no usable hold-out slice"}
     try:
-        data = data_agent.prepare(security_id=spec.get("security_id", ""),
-                                  window_start=train_end, window_end=window_end)
-        m = executor.run({**spec, "window_start": train_end, "window_end": window_end}, data)
+        data, wb = _prepare_with_warmup(data_agent, spec.get("security_id", ""), train_end, window_end, spec)
+        m = executor.run({**spec, "window_start": train_end, "window_end": window_end}, data, warmup_bars=wb)
     except Exception as exc:
         return {"status": "unvalidated", "reason": "hold-out backtest failed", "error": str(exc)}
     n = int(m.get("n_trades", 0))
@@ -405,12 +439,11 @@ def _run_oos_lockbox(
         oos_spec["window_start"] = spec.get("window_end", "2024-01-01")
         oos_spec["window_end"] = "2025-12-31"
         try:
-            oos_data = data_agent.prepare(
-                security_id=state.current_asset,
-                window_start=oos_spec["window_start"],
-                window_end=oos_spec["window_end"],
+            oos_data, oos_wb = _prepare_with_warmup(
+                data_agent, state.current_asset,
+                oos_spec["window_start"], oos_spec["window_end"], oos_spec,
             )
-            oos_metrics = executor.run(oos_spec, oos_data)
+            oos_metrics = executor.run(oos_spec, oos_data, warmup_bars=oos_wb)
             return (
                 oos_metrics.get("sharpe_annual", 0.0) > 0
                 and oos_metrics.get("total_return", 0.0) > 0
