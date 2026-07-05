@@ -70,6 +70,13 @@ class BacktestConfig:
     # filter / size entry signals. See
     # :mod:`src.backend.backtesting.event_gate`.
     event_gate: "EventGateConfig | None" = None  # noqa: F821 -- forward ref
+    # C1 (QUANT-REVIEW-2026-07-03) — warm-up prefix length. When > 0 the first ``warmup_bars`` rows
+    # are a burn-in region: indicators converge on them, but the strategy is prevented from opening
+    # positions until ``data.index[warmup_bars]`` (StrategyBase honours ``_trade_start``), and the
+    # reported per-bar metrics are recomputed over the post-warm-up window so the flat burn-in does
+    # not dilute them. Used by walk-forward / OOS / hold-out so a strategy isn't "validated" on cold,
+    # unconverged indicators.
+    warmup_bars: int = 0
 
 
 # Forward-reference resolver (kept at module level so the dataclass annotation
@@ -237,6 +244,14 @@ def run_backtest(
         strategy_class._event_gate_config = None  # type: ignore[attr-defined]
         strategy_class._event_gate_symbol = None  # type: ignore[attr-defined]
 
+    # C1 — warm-up trade mask: suppress entries until the first post-warm-up bar so indicators
+    # converge on the prefix without in-sample trades leaking into the evaluation window. Set on every
+    # run (None when no warm-up) so a stale value can't leak across reused strategy classes.
+    if config.warmup_bars > 0 and len(bt_data) > config.warmup_bars:
+        strategy_class._trade_start = pd.Timestamp(bt_data.index[config.warmup_bars])  # type: ignore[attr-defined]
+    else:
+        strategy_class._trade_start = None  # type: ignore[attr-defined]
+
     try:
         bt = Backtest(
             bt_data,
@@ -266,6 +281,11 @@ def run_backtest(
 
     result = _parse_stats(stats)
 
+    # C1/M3 — recompute per-bar metrics over the post-warm-up window only (the flat burn-in region
+    # would otherwise dilute the Sharpe/Sortino and understate the window return/drawdown).
+    if config.warmup_bars > 0:
+        result = _reslice_to_window(result, config.warmup_bars)
+
     # ATS-1714 — record successful completion.
     if _registry and run_id:
         try:
@@ -278,7 +298,9 @@ def run_backtest(
     # ATS-1718 — auto-compute buy-and-hold benchmark for every run.
     try:
         from src.backend.backtesting.benchmarks.buy_hold import compute_buy_hold
-        bh = compute_buy_hold(bt_data)
+        # C1 — benchmark the window, not the warm-up prefix, so strategy-vs-benchmark stays comparable.
+        bh_data = bt_data.iloc[config.warmup_bars:] if config.warmup_bars > 0 else bt_data
+        bh = compute_buy_hold(bh_data)
         result.buy_hold_return = bh.total_return
     except Exception:
         logger.debug("Buy-and-hold benchmark computation skipped", exc_info=True)
@@ -302,6 +324,34 @@ def run_backtest(
             "the strategy never generated a signal in this date range. "
             "Try a wider window or different parameters."
         )
+    return result
+
+
+def _reslice_to_window(result: BacktestResult, warmup_bars: int) -> BacktestResult:
+    """C1/M3 — recompute per-bar metrics over the post-warm-up window only.
+
+    After a warm-up run (indicators converge on the prefix; ``StrategyBase`` suppresses entries until
+    the window), the equity curve still carries a flat burn-in region that would dilute the per-bar
+    Sharpe/Sortino and understate the window return/drawdown. Recompute those from the window slice.
+    Trades are already window-only (entries were masked during the prefix), so trade-derived metrics
+    (trade_count / win_rate / profit_factor) are left intact. Annualization uses the daily factor
+    (252); interval-awareness is handled globally by C2.
+    """
+    eq_full = result.equity_curve
+    if warmup_bars <= 0 or len(eq_full) <= warmup_bars + 2:
+        return result
+    eq = pd.Series(eq_full[warmup_bars:], dtype=float).reset_index(drop=True)
+    result.equity_curve = eq.tolist()
+    if eq.iloc[0] > 0:
+        result.total_return = float(eq.iloc[-1] / eq.iloc[0] - 1.0)
+    rets = eq.pct_change().dropna()
+    if len(rets) > 1 and rets.std(ddof=1) > 0:
+        result.sharpe_ratio = float(rets.mean() / rets.std(ddof=1) * math.sqrt(252))
+    else:
+        result.sharpe_ratio = 0.0
+    run_max = eq.cummax()
+    result.max_drawdown = float((1.0 - eq / run_max).max())
+    result.sortino_ratio = calculate_sortino(eq)
     return result
 
 

@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **6 / 95** (H7, H1, M25, M24, H2-scoped, H6). Cluster 1A complete; 1B in progress.
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **7 / 95** (H7, H1, M25, M24, H2-scoped, H6, **C1**). 1 of 3 criticals fixed. 1B in progress.
 
 **Board mirror (local `tickets/`, staged for Jira — token was expired 2026-06-18):** Epic **ATS-1787**. Stories: Phase 0 = ATS-1788, Phase 1 = ATS-1789, Phase 2 = ATS-1790, Phase 3 = ATS-1791, Phase 4 = ATS-1792, Phase 5 = ATS-1793. Cluster sub-tasks = ATS-1794…1812 (one per cluster below, in order). Update ticket status via `board.py status <KEY> <status>` (auto-pushes to Jira when the token is valid).
 
@@ -39,8 +39,8 @@
 ### Cluster 1B — Indicator warm-up buffers
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| C1 | **Crit** | spec | OPEN | | Walk-forward cold-start. Proper fix needs a **runner-level warm-up/trade-start** mechanism (prepend `test_start − max_lookback`, evaluate stats only from `test_start`) — a real engine change. H6 (done) defuses the worst symptom: cold windows that don't trade are no longer counted valid. |
-| M26 | Med | mech | OPEN | | Same cold-start on OOS/hold-out/decay slices in loop.py — pairs with C1's warm-up mechanism |
+| C1 | **Crit** | spec | DONE (review) | `tests/unit/backtesting/test_warmup_c1.py` | Runner-level warm-up built: `BacktestConfig.warmup_bars` + generic `StrategyBase` trade-start mask (`buy`/`sell` suppressed until the window) + `_reslice_to_window` metrics (also fixes M3-style dilution). Walk-forward now warms indicators on a prefix. |
+| M26 | Med | mech | OPEN | | Apply C1's `warmup_bars` to the loop's OOS/hold-out/decay backtests. **Mechanism now ready** — thread a prefix + `warmup_bars` through `executor.run` for those slices. |
 | M3 | Med | mech | OPEN | | Trim flat warm-up region from "daily returns" |
 | H6 | High | mech | DONE (review) | `tests/unit/backtesting/test_walk_forward_validity_h6.py` | `_window_is_valid` requires ≥1 trade + Sharpe>threshold; crashed windows kept in the denominator (`crashed_windows`). |
 | H12 | High | mech | OPEN | | Pandas indicators emit signals during warm-up; HOLD→0.0 defeats NaN skip |

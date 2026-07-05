@@ -187,6 +187,10 @@ class StrategyBase(Strategy):
     _gates_df: "pd.DataFrame | None" = None
     _event_gate_config: "EventGateConfig | None" = None
     _event_gate_symbol: str | None = None
+    # C1 — warm-up trade mask. The runner sets this to the first post-warm-up bar's timestamp when a
+    # warm-up prefix is configured; entries before it are suppressed so indicators converge on the
+    # prefix without any in-sample trades leaking into the evaluation window. None = no masking.
+    _trade_start: Any = None
 
     def _ensure_gate_logs(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Lazy-init per-instance blocked / reduced gate logs.
@@ -297,3 +301,31 @@ class StrategyBase(Strategy):
             return allow_entry, new_size, gate
         # Unknown / NO_GATE — passthrough.
         return allow_entry, size_fraction, gate
+
+    # ------------------------------------------------------------------ #
+    # C1 — warm-up trade mask (generic across every subclass)
+    # ------------------------------------------------------------------ #
+
+    def _in_warmup(self) -> bool:
+        """True while the current bar precedes the configured warm-up boundary (C1)."""
+        ts = self._trade_start
+        if ts is None:
+            return False
+        try:
+            import pandas as pd
+
+            return pd.Timestamp(self.data.index[-1]) < pd.Timestamp(ts)
+        except (AttributeError, IndexError, TypeError, ValueError):
+            return False
+
+    def buy(self, *args: Any, **kwargs: Any):  # noqa: D401 -- backtesting.py entry API
+        """Open a long — suppressed during the warm-up region (C1)."""
+        if self._in_warmup():
+            return None
+        return super().buy(*args, **kwargs)
+
+    def sell(self, *args: Any, **kwargs: Any):  # noqa: D401 -- backtesting.py entry API
+        """Open a short — suppressed during the warm-up region (C1)."""
+        if self._in_warmup():
+            return None
+        return super().sell(*args, **kwargs)

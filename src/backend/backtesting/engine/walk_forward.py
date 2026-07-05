@@ -170,14 +170,24 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
         best_params = opt_result.best_params
         train_result = opt_result.best_result
 
-        # ---- Evaluate on test data ------------------------------------ #
+        # ---- Evaluate on test data (C1: warm indicators on a prefix; trade only in-window) ---- #
         strategy_cls = config.strategy_class.create_with_params(**best_params)
+        test_start = test_df.index[0]
+        prefix = config.data.loc[config.data.index < test_start]
+        # Warm-up length = the strategy's largest integer lookback (bounded by available prior data).
+        max_lookback = int(max(
+            (v for v in best_params.values() if isinstance(v, (int, float)) and v > 1),
+            default=0,
+        ))
+        warmup_bars = min(max_lookback, len(prefix))
+        eval_df = pd.concat([prefix.iloc[-warmup_bars:], test_df]) if warmup_bars > 0 else test_df
         test_bt_config = BacktestConfig(
             symbol="WF",
             strategy_class=strategy_cls,
-            data=test_df,
+            data=eval_df,
             cash=config.cash,
             commission=config.commission,
+            warmup_bars=warmup_bars,
         )
 
         try:
