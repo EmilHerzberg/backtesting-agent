@@ -16,6 +16,7 @@ from src.backend.backtesting.engine.exceptions import (
 )
 from src.backend.backtesting.engine.metrics import (
     TradeDetail,
+    benchmark_sharpe,
     calculate_calmar,
     calculate_profit_factor,
     calculate_sortino,
@@ -283,11 +284,10 @@ def run_backtest(
     result = _parse_stats(stats)
 
     # C1/M3 — recompute per-bar metrics over the post-warm-up window only (the flat burn-in region
-    # would otherwise dilute the Sharpe/Sortino and understate the window return/drawdown). C2: the
-    # windowed Sharpe uses the interval-aware annualization factor, not a hardcoded 252.
+    # would otherwise dilute the Sharpe/Sortino and understate the window return/drawdown). Pass the
+    # window DatetimeIndex so the reslice uses the interval-aware geometric estimator (P1-03/C2/M5).
     if config.warmup_bars > 0:
-        from src.backend.backtesting.engine.metrics import periods_per_year
-        result = _reslice_to_window(result, config.warmup_bars, periods_per_year(bt_data.index))
+        result = _reslice_to_window(result, config.warmup_bars, bt_data.index)
 
     # ATS-1714 — record successful completion.
     if _registry and run_id:
@@ -330,31 +330,37 @@ def run_backtest(
     return result
 
 
-def _reslice_to_window(result: BacktestResult, warmup_bars: int, ppy: float = 252.0) -> BacktestResult:
+def _reslice_to_window(result: BacktestResult, warmup_bars: int, window_index=None) -> BacktestResult:
     """C1/M3 — recompute per-bar metrics over the post-warm-up window only.
 
     After a warm-up run (indicators converge on the prefix; ``StrategyBase`` suppresses entries until
     the window), the equity curve still carries a flat burn-in region that would dilute the per-bar
     Sharpe/Sortino and understate the window return/drawdown. Recompute those from the window slice.
     Trades are already window-only (entries were masked during the prefix), so trade-derived metrics
-    (trade_count / win_rate / profit_factor) are left intact. Annualization uses the daily factor
-    (252); interval-awareness is handled globally by C2.
+    (trade_count / win_rate / profit_factor) are left intact. P1-03/C2/M5: the windowed Sharpe uses the
+    SAME geometric/compounded, interval-aware estimator (``benchmark_sharpe``) as the non-warm-up
+    strategy Sharpe and the benchmark — not a separate arithmetic one — so all three stay on one scale.
     """
     eq_full = result.equity_curve
     if warmup_bars <= 0 or len(eq_full) <= warmup_bars + 2:
         return result
-    eq = pd.Series(eq_full[warmup_bars:], dtype=float).reset_index(drop=True)
-    result.equity_curve = eq.tolist()
+    win = eq_full[warmup_bars:]
+    win_idx = window_index[warmup_bars:] if (window_index is not None and len(window_index) == len(eq_full)) else None
+    eq = pd.Series(win, index=win_idx) if win_idx is not None else pd.Series(win, dtype=float).reset_index(drop=True)
+    result.equity_curve = list(win)
     if eq.iloc[0] > 0:
         result.total_return = float(eq.iloc[-1] / eq.iloc[0] - 1.0)
-    rets = eq.pct_change().dropna()
-    if len(rets) > 1 and rets.std(ddof=1) > 0:
-        result.sharpe_ratio = float(rets.mean() / rets.std(ddof=1) * math.sqrt(ppy))
-    else:
-        result.sharpe_ratio = 0.0
+    result.sharpe_ratio = benchmark_sharpe(eq)  # geometric, interval-aware — one scale with the benchmark
+    ppy = periods_per_year(eq.index) if isinstance(eq.index, pd.DatetimeIndex) else 252.0
     run_max = eq.cummax()
     result.max_drawdown = float((1.0 - eq / run_max).max())
     result.sortino_ratio = calculate_sortino(eq, periods_per_year=ppy)
+    # Keep Calmar consistent with the resliced window (was left on the full flat-diluted values).
+    if isinstance(eq.index, pd.DatetimeIndex) and len(eq) >= 2:
+        years = max((eq.index[-1] - eq.index[0]).days, 1) / 365.25
+    else:
+        years = len(eq) / ppy
+    result.calmar_ratio = calculate_calmar(result.total_return, result.max_drawdown, years)
     return result
 
 

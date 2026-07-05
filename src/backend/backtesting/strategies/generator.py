@@ -172,10 +172,7 @@ def generate_strategy(
                         # H12: warm-up bars (indicator not yet converged) → NaN, not a spurious neutral
                         # 0.0, so backtesting.py's leading-NaN skip keeps the strategy from trading
                         # before every indicator has warmed up.
-                        try:
-                            arr[ind.compute(df).isna().to_numpy()] = np.nan
-                        except Exception:
-                            pass
+                        arr[ind.compute(df).isna().to_numpy()] = np.nan
                         return arr
                     return _signal_fn
 
@@ -189,6 +186,11 @@ def generate_strategy(
                     name=f"Signal_{config['name']}",
                 )
                 self._signals.append(sig)
+                # P1-04/H12: register each indicator as a strategy attribute so backtesting.py's
+                # warm-up detection (_strategy_indicators reads self.__dict__) finds it and skips the
+                # leading NaN region — otherwise a DynamicStrategy (indicators kept only in a list)
+                # trades on unconverged indicators despite the _signal_fn NaN mask.
+                setattr(self, f"_signal_ind_{idx}", sig)
                 self._signal_weights.append(self._weights[idx])
 
         def next(self) -> None:

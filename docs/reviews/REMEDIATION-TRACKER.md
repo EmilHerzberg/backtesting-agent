@@ -6,7 +6,9 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **19 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50) + L17, L22. **✅ All 3 criticals fixed. Phase 1 COMPLETE (all 5 clusters).**
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **19 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50) + L17, L22. **✅ All 3 criticals fixed. Phase 1 COMPLETE + adversarially reviewed.**
+
+> **Phase 1 review (2026-07-05, `PHASE1-REVIEW-2026-07-05.md`):** a 9-reviewer adversarial audit found 12 real issues (0 crit, 7 high) — 5 behavioral defects where a fix didn't reach the production path + 7 test-integrity gaps. **All 12 fixed** in commit "Phase 1 review fixes": M4 shipped on the CLI/YAML default; the C3 default-goal Sharpe-floor regression removed; win_rate/profit_factor goals now enforced (not skipped); the generator warm-up mask made effective; the reslice put on the geometric Sharpe scale; and the DSR-loop / reslice-value / generator / M5·L17 / H30 / M24 tests added. Suite 635 pass.
 
 **Board mirror (local `tickets/`, staged for Jira — token was expired 2026-06-18):** Epic **ATS-1787**. Stories: Phase 0 = ATS-1788, Phase 1 = ATS-1789, Phase 2 = ATS-1790, Phase 3 = ATS-1791, Phase 4 = ATS-1792, Phase 5 = ATS-1793. Cluster sub-tasks = ATS-1794…1812 (one per cluster below, in order). Update ticket status via `board.py status <KEY> <status>` (auto-pushes to Jira when the token is valid).
 

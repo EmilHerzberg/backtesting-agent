@@ -61,14 +61,31 @@ class _BuyHold(StrategyBase):
         return {}
 
 
+@pytest.mark.finding("M5")
 @pytest.mark.finding("M6")
 def test_benchmark_sharpe_matches_strategy_estimator_scale():
     """A buy-and-hold strategy's backtesting.py Sharpe and the benchmark Sharpe are on the same scale
-    (both geometric/compounded, interval-aware) — not off by a sqrt(252/ppy) or ddof mismatch."""
+    (both geometric/compounded, interval-aware) — not off by a sqrt(252/ppy) or ddof mismatch.
+    P1-06: tight tolerance so the pre-fix arithmetic-ddof0 estimator (~0.13 off here) would fail."""
     data = make_ohlcv(days=400, seed=2, drift=0.0006)
     res = run_backtest(BacktestConfig(symbol="T", strategy_class=_BuyHold, data=data, commission=0.0))
     bh = compute_buy_hold(data)
-    assert res.sharpe_ratio == pytest.approx(bh.annualized_sharpe, abs=0.3)
+    assert res.sharpe_ratio == pytest.approx(bh.annualized_sharpe, abs=0.05)
+
+
+@pytest.mark.finding("L17")
+def test_market_benchmark_annualizes_by_interval():
+    """P1-07/L17: compute_market_benchmark scales alpha and residual/market Sharpe by the interval
+    factor, not a hardcoded 252. (NB: this helper is currently unwired — see M19; kept tested.)"""
+    from src.backend.backtesting.benchmarks.market import compute_market_benchmark
+
+    rng = np.random.default_rng(0)
+    strat = rng.normal(0.001, 0.01, 200)
+    asset = rng.normal(0.0008, 0.01, 200)
+    daily = compute_market_benchmark(strat, asset, periods_per_year=252)
+    weekly = compute_market_benchmark(strat, asset, periods_per_year=52)
+    assert weekly.residual_sharpe == pytest.approx(daily.residual_sharpe * (52 / 252) ** 0.5, rel=1e-6)
+    assert weekly.alpha_vs_asset == pytest.approx(daily.alpha_vs_asset * (52 / 252), rel=1e-6)
 
 
 @pytest.mark.finding("M6")

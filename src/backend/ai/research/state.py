@@ -168,6 +168,8 @@ class Candidate:
     total_return: float = 0.0
     max_drawdown: float = 0.0
     n_trades: int = 0
+    win_rate: float = 0.0       # P1-09 — so win-rate goals can be enforced (not silently skipped)
+    profit_factor: float = 0.0  # P1-09 — so profit-factor goals can be enforced
     gate_report_summary: dict[str, Any] = field(default_factory=dict)
     critic_confidence: str = "low"
     critique: dict[str, Any] = field(default_factory=dict)  # full CriticReport (weaknesses/recommendation/reasoning)
@@ -191,6 +193,8 @@ def _candidate_metrics(c: "Candidate") -> dict[str, Any]:
         "total_return": c.total_return,
         "max_drawdown": c.max_drawdown,
         "n_trades": c.n_trades,
+        "win_rate": c.win_rate,
+        "profit_factor": c.profit_factor,
     }
 
 

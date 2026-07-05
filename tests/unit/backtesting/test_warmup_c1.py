@@ -10,6 +10,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from src.backend.backtesting.engine.metrics import benchmark_sharpe
 from src.backend.backtesting.engine.runner import BacktestConfig, run_backtest
 from src.backend.backtesting.strategies.base import StrategyBase
 from tests.support.frozen_data import make_ohlcv
@@ -57,6 +58,24 @@ def test_warmup_reslices_metrics_to_window():
     )
     # The reported equity curve excludes the flat warm-up prefix (~window length).
     assert abs(len(warm.equity_curve) - (len(data) - warmup)) <= 3
+
+
+@pytest.mark.finding("C1")
+def test_reslice_recomputes_window_metrics_on_geometric_scale():
+    """P1-02/P1-03: the reslice recomputes the window-only return/drawdown (not diluted by the flat
+    warm-up prefix) AND puts Sharpe on the SAME geometric estimator as the benchmark — not arithmetic."""
+    data = make_ohlcv(days=200, seed=3)
+    warmup = 60
+    warm = run_backtest(BacktestConfig(symbol="T", strategy_class=_BuyFirstBar, data=data, warmup_bars=warmup))
+    eq = warm.equity_curve
+    win_idx = data.index[warmup:warmup + len(eq)]
+    eq_s = pd.Series(eq, index=win_idx)
+    # Value assertions (P1-02) — window-only, not curve-length only.
+    assert warm.total_return == pytest.approx(eq[-1] / eq[0] - 1.0)
+    run_max = eq_s.cummax()
+    assert warm.max_drawdown == pytest.approx(float((1.0 - eq_s / run_max).max()))
+    # Geometric scale (P1-03) — matches benchmark_sharpe, not an arithmetic mean/std*sqrt(ppy).
+    assert warm.sharpe_ratio == pytest.approx(benchmark_sharpe(eq_s), rel=1e-6)
 
 
 @pytest.mark.finding("C1")

@@ -86,3 +86,12 @@ def test_composite_penalizes_drawdown():
     high = _calculate_objective(_Res(0.50), _Cfg())
     assert high < low
     assert (low - high) > 0.3  # a 50% DD is a materially larger penalty than a 5% DD
+
+
+@pytest.mark.finding("M4")
+def test_shipped_composite_default_carries_the_rescaled_weight():
+    """P1-08: the SHIPPED default the CLI/YAML path consumes (OptunaConfig), not just the fallback
+    constant, must carry the fraction-scaled drawdown weight."""
+    from src.backend.backtesting.config.schema import OptunaConfig
+
+    assert OptunaConfig().composite_weights["max_drawdown"] == -1.5

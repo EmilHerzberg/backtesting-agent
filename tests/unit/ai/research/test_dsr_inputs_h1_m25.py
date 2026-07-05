@@ -8,10 +8,14 @@ number of trials that actually produced a Sharpe, and the variance/N scopes didn
 """
 from __future__ import annotations
 
+import uuid
+from unittest.mock import AsyncMock, MagicMock
+
 import numpy as np
 import pytest
 
-from src.backend.ai.research.loop import _dsr_registry_inputs, _period_sharpe
+from src.backend.ai.research.loop import _dsr_registry_inputs, _period_sharpe, research_loop
+from src.backend.ai.research.state import Budget, GoalBrief, Hypothesis, ResearchState
 from src.backend.backtesting.gates.deflated_sharpe import DeflatedSharpeGate, deflated_sharpe
 from src.backend.backtesting.gates.pipeline import GateContext
 
@@ -88,3 +92,82 @@ def test_deflated_gate_measured_variance_not_flagged():
     res = DeflatedSharpeGate().check(_dsr_ctx(returns, n_trials=50, sr_variance=0.02, defaulted=False))
     assert res.details.get("sr_variance_defaulted") is False
     assert not res.details.get("provisional")  # firm PASS/FAIL, not provisional
+
+
+def _hyp():
+    return Hypothesis(
+        hypothesis_id=f"hyp_{uuid.uuid4().hex[:8]}", author="t", economic_rationale="r",
+        claimed_mechanism="m", falsifiable_prediction="p", proposed_template_id="sma_crossover",
+    )
+
+
+def _spec(v):
+    return {
+        "strategy_hash": f"{'a' * 60}{v:04d}", "template_id": "sma_crossover",
+        "params": {"fast_period": 10 + v, "slow_period": 50},
+        "window_start": "2018-01-01", "window_end": "2022-12-31",
+    }
+
+
+@pytest.mark.finding("H1")
+@pytest.mark.finding("M25")
+@pytest.mark.asyncio
+async def test_loop_feeds_per_period_variance_and_measured_count_to_gate():
+    """P1-01: the load-bearing seam. The loop must pass PER-PERIOD trial-Sharpe variance and the
+    MEASURED-trial count to update_registry_stats — not np.var(annualized sharpes) / total_iterations
+    (the exact original H1/M25 bug). Reverting loop.py to feed _sharpe_values / total_iterations makes
+    this test fail."""
+    rng = np.random.default_rng(0)
+    returns_list = [
+        rng.normal(0.0015, 0.010, 300),
+        rng.normal(0.0005, 0.012, 300),
+        rng.normal(0.0025, 0.009, 300),
+    ]
+    period_sharpes = [_period_sharpe(r) for r in returns_list]
+
+    state = ResearchState(
+        goal=GoalBrief(goal_text="x", asset_pool=["AAPL"], strategy_families=["trend_following"],
+                       target_candidates=99, max_runs=3),
+        budget=Budget(max_runs=3),
+    )
+
+    cc = {"n": 0}
+
+    async def propose(asset, strategy_families, failure_context, registry_summary):
+        cc["n"] += 1
+        return _hyp(), _spec(cc["n"])
+
+    strategist = AsyncMock()
+    strategist.propose = propose
+
+    ci = {"i": 0}
+
+    def run(spec, data, **kw):
+        r = returns_list[min(ci["i"], len(returns_list) - 1)]
+        ci["i"] += 1
+        return {
+            "sharpe_annual": float(np.mean(r) / np.std(r) * np.sqrt(252)),
+            "total_return": 0.2, "max_drawdown": -0.1, "n_trades": 80,
+            "exposure_time": 0.5, "returns": r, "buy_hold_return": 0.1,
+        }
+
+    executor = MagicMock()
+    executor.run.side_effect = run
+    gatekeeper = MagicMock()
+    gatekeeper.evaluate.return_value = {"passed": True, "results": []}
+    gatekeeper.update_registry_stats = MagicMock()
+    critic = AsyncMock()
+    critic.review.return_value = {"recommendation": "accept", "confidence": "medium", "weaknesses": []}
+    data_agent = MagicMock()
+    data_agent.prepare.return_value = "mock_df"
+
+    await research_loop(state, strategist, executor, gatekeeper, critic, data_agent)
+
+    calls = gatekeeper.update_registry_stats.call_args_list
+    assert len(calls) >= 3
+    last_n, last_var = calls[-1].args[0], calls[-1].args[1]
+    # Measured-trial count (M25), and the PER-PERIOD variance (H1) — not the ~252x annualized one.
+    assert last_n == 3
+    assert last_var == pytest.approx(float(np.var(period_sharpes, ddof=1)))
+    annual_var = float(np.var([float(np.mean(r) / np.std(r) * np.sqrt(252)) for r in returns_list], ddof=1))
+    assert last_var != pytest.approx(annual_var, rel=1e-3)

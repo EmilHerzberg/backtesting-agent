@@ -48,7 +48,9 @@ class OptunaConfig(BaseModel):
     pruner: str = "median"
     objective: str = "composite"
     composite_weights: dict[str, float] = Field(
-        default_factory=lambda: {"sharpe": 0.6, "max_drawdown": -0.4}
+        # M4: max_drawdown is a FRACTION (F-013); -1.5 makes a bad drawdown meaningfully offset Sharpe
+        # (a 50% DD ≈ -0.75) instead of degenerating to Sharpe-maximization at -0.4.
+        default_factory=lambda: {"sharpe": 0.6, "max_drawdown": -1.5}
     )
 
 

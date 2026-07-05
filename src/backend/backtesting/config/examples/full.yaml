@@ -50,7 +50,7 @@ optuna:
   objective: composite
   composite_weights:
     sharpe: 0.6
-    max_drawdown: -0.4
+    max_drawdown: -1.5   # M4: fraction-scaled so drawdown actually penalizes (was -0.4)
 
 walk_forward:
   enabled: true

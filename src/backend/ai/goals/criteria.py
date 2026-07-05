@@ -106,12 +106,10 @@ def parse_criteria(text: str) -> dict[str, Any]:
         v = int(m.group(1))
         criteria.append({"metric": "n_trades", "op": ">=", "value": v, "label": f"≥ {v} Trades"})
 
-    # Default if nothing matched
-    if not criteria:
-        criteria.append(
-            {"metric": "sharpe_annual", "op": ">=", "value": 1.0, "label": "Sharpe ≥ 1.0 (default)"}
-        )
-
+    # P1-11: no default numeric criterion when the goal states none. An empty criteria list means the
+    # loop counts gate-passing candidates (the rigor preset already enforces a min-Sharpe floor); a
+    # hard-coded Sharpe >= 1.0 default would gate above every preset floor and make ordinary runs burn
+    # to budget instead of completing. Explicit user thresholds are still enforced (C3).
     return {"criteria": criteria, "target_count": target}
 
 
@@ -120,13 +118,14 @@ def candidate_meets_criteria(
 ) -> bool:
     """Check whether a single candidate (a metrics dict with canonical keys) satisfies all criteria.
 
-    Criteria whose metric is not present on the candidate (e.g. a regime criterion on a robustness
-    candidate) are skipped rather than treated as a failure.
+    P1-09: a criterion whose metric the candidate cannot provide (``None``) is a FAILURE, not a silent
+    skip — otherwise ``goal_met`` would count a candidate against a win-rate/profit-factor/regime goal
+    it never demonstrated. The candidate metrics dict must expose every enforceable key.
     """
     for c in criteria:
         val = candidate.get(c["metric"])
         if val is None:
-            continue  # not applicable to this candidate — don't fail on it
+            return False  # criterion cannot be evaluated → the candidate does not satisfy it
         target = c["value"]
         if c.get("abs"):
             val = abs(val)

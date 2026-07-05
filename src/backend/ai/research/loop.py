@@ -804,6 +804,8 @@ async def research_loop(
                     total_return=metrics.get("total_return", 0.0),
                     max_drawdown=metrics.get("max_drawdown", 0.0),
                     n_trades=metrics.get("n_trades", 0),
+                    win_rate=metrics.get("win_rate", 0.0),           # P1-09
+                    profit_factor=metrics.get("profit_factor", 0.0),  # P1-09
                     gate_report_summary=gate_report,
                     critic_confidence=critique.get("confidence", "low"),
                     critique=critique,

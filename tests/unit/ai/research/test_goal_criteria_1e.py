@@ -59,3 +59,48 @@ def test_no_parsed_criteria_falls_back_to_raw_count():
     state = ResearchState(goal=GoalBrief(goal_text="x", target_candidates=2), budget=Budget())
     state.candidates = [_cand("a", sharpe=0.1), _cand("b", sharpe=0.1)]
     assert state.goal_met() is True
+
+
+@pytest.mark.finding("C3")
+def test_default_goal_imposes_no_hard_sharpe_floor():
+    """P1-11 regression guard: a goal with no explicit numeric criterion parses to an EMPTY criteria
+    list (not a hard Sharpe>=1.0), so gate-admissible candidates below 1.0 still complete the run."""
+    parsed = parse_criteria("Find good strategies for AAPL")
+    assert parsed["criteria"] == []
+    goal = GoalBrief(goal_text="Find good strategies", target_candidates=2, criteria=parsed["criteria"])
+    state = ResearchState(goal=goal, budget=Budget())
+    state.candidates = [_cand("a", sharpe=0.6), _cand("b", sharpe=0.7)]  # below 1.0 but gate-admissible
+    assert state.goal_met() is True
+    assert state.validated_count(oos_enabled=False) == 2
+
+
+@pytest.mark.finding("L22")
+def test_profit_factor_goal_is_enforced_not_skipped():
+    """P1-09: a candidate that fails a profit-factor goal must NOT be counted (was vacuously skipped
+    because Candidate carried no profit_factor field)."""
+    goal = GoalBrief(
+        goal_text="Profit factor > 2", target_candidates=1,
+        criteria=parse_criteria("Finde 1 mit Profit Factor > 2")["criteria"],
+    )
+    state = ResearchState(goal=goal, budget=Budget())
+    good = _cand("a"); good.profit_factor = 3.0
+    bad = _cand("b"); bad.profit_factor = 1.1
+    state.candidates = [bad]
+    assert state.goal_met() is False          # 1.1 < 2 → not counted
+    state.candidates = [good]
+    assert state.goal_met() is True
+
+
+@pytest.mark.finding("H30")
+def test_drawdown_goal_through_wired_candidate_path():
+    """P1-10: drive a real Candidate (executor's negative-fraction max_drawdown) through
+    _candidate_metrics → candidate_meets_criteria → goal_met, not a stub dict."""
+    goal = GoalBrief(
+        goal_text="drawdown < 20%", target_candidates=1,
+        criteria=parse_criteria("Finde 1 mit drawdown < 20%")["criteria"],
+    )
+    state = ResearchState(goal=goal, budget=Budget())
+    state.candidates = [_cand("deep", dd=-0.30)]   # 30% DD (executor sign) fails a 20% limit
+    assert state.goal_met() is False
+    state.candidates = [_cand("ok", dd=-0.15)]     # 15% DD passes
+    assert state.goal_met() is True

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.backend.ai.research.quality import quality_summary
 
 
@@ -81,6 +83,17 @@ def test_dsr_provisional_paths():
     solid = quality_summary(_report(dsr={"dsr": 0.97, "n_trials": 50, "sr_variance": 0.02}), mode="robustness")
     assert solid["dsr"]["provisional"] is False
     assert solid["dsr"]["value"] == 0.97
+
+
+@pytest.mark.finding("M24")
+def test_measured_variance_equal_to_floor_is_not_provisional():
+    """P1-12: a genuinely-measured 0.001 variance (flag False) must NOT be provisional — the fix reads
+    the explicit sr_variance_defaulted flag, not a magic-value sniff of 0.001 (which would fail here)."""
+    r = quality_summary(
+        _report(dsr={"dsr": 0.97, "n_trials": 50, "sr_variance": 0.001, "sr_variance_defaulted": False}),
+        mode="robustness",
+    )
+    assert r["dsr"]["provisional"] is False
 
 
 def test_dsr_absent_is_none():
