@@ -85,13 +85,17 @@ def test_build_pipeline_regime_softens_quality_gates():
     assert sev["MinimumActivityGate"] == GateSeverity.HARD
 
 
-def test_build_pipeline_robustness_gates_are_hard_except_provider_surface():
+def test_build_pipeline_robustness_gates_are_hard_except_soft_surfaces():
     from src.backend.ai.research.gatekeeper import build_default_pipeline, RIGOR_PRESETS
     from src.backend.backtesting.gates.pipeline import GateSeverity
     from src.backend.backtesting.gates.basic_gates import ProviderCapabilityGate
+    from src.backend.backtesting.gates.canary import LeakageCanaryGate
     p = build_default_pipeline(RIGOR_PRESETS["standard"], mode="robustness")
-    # H24: the provider-capability gate is a SOFT surface (survivorship risk is flagged, not a hard
-    # block of every default yfinance run); every OTHER robustness gate stays HARD.
+    # Two SOFT surfaces in robustness: the provider-capability gate (H24 — survivorship risk flagged,
+    # not a hard block of every default yfinance run) and the leakage canary (M22 — suspected
+    # look-ahead surfaced as a weakness, since its noise-band arm can false-positive a weak-but-real
+    # edge). Every OTHER robustness gate stays HARD.
+    soft = (ProviderCapabilityGate, LeakageCanaryGate)
     for g in p.gates:
-        expected = GateSeverity.SOFT if isinstance(g, ProviderCapabilityGate) else GateSeverity.HARD
+        expected = GateSeverity.SOFT if isinstance(g, soft) else GateSeverity.HARD
         assert g.severity == expected

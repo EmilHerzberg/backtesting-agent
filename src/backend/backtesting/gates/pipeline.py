@@ -70,6 +70,7 @@ class GateContext:
     n_trials_global: int = 0
     trial_sr_variance: float = 0.0
     trial_sr_variance_defaulted: bool = False  # M24: variance is a floored default, not a measurement
+    run_strategy_fn: Any = None                # M22: re-run the candidate spec on arbitrary OHLCV (leakage canary)
 
 
 class Gate(ABC):

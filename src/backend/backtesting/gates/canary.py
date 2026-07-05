@@ -71,7 +71,10 @@ class LeakageCanaryGate(Gate):
             self.gate_id = "leakage_canary_bootstrap"
 
     def check(self, ctx: GateContext) -> GateResult:
-        if self._run_fn is None:
+        # M22: the run function may be supplied per-candidate via the context (the loop closes it over
+        # the current spec + executor) rather than baked into the gate instance.
+        run_fn = self._run_fn if self._run_fn is not None else getattr(ctx, "run_strategy_fn", None)
+        if run_fn is None:
             return self._pass(details={"reason": "no run function provided, provisional pass", "provisional": True})
 
         candidate_returns = ctx.returns
@@ -100,7 +103,7 @@ class LeakageCanaryGate(Gate):
         failed_paths = 0
         for path_df in paths:
             try:
-                path_returns = self._run_fn(path_df)
+                path_returns = run_fn(path_df)
                 sr = _compute_perbar_sharpe(np.asarray(path_returns))
                 noise_sharpes.append(sr)
             except Exception as exc:

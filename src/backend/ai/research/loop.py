@@ -543,6 +543,7 @@ async def research_loop(
     budget_controller: AgentBudgetController | None = None,
     on_event: Any = None,  # callback for UI/logging events
     control: Any = None,  # callable() -> "run"|"pause"|"stop"|"stop_report" (A-9)
+    enable_leakage_canary: bool = True,  # M22: run the leakage canary on survivors (re-runs on synthetics)
 ) -> ResearchState:
     """Run the autonomous research loop until budget exhausted or goal met.
 
@@ -783,6 +784,12 @@ async def research_loop(
             gatekeeper.update_registry_stats(
                 _dsr_n_trials, sr_variance, variance_defaulted=_sr_defaulted
             )
+            # M22: a closure that re-runs THIS candidate's spec on arbitrary OHLCV — the leakage
+            # canary runs it on zero-drift synthetics (only reached by survivors of the cheaper gates).
+            _canary_run_fn = (
+                (lambda df: executor.run(spec, df).get("returns"))
+                if enable_leakage_canary else None
+            )
             try:
                 gate_report = gatekeeper.evaluate(
                     metrics=metrics,
@@ -794,6 +801,7 @@ async def research_loop(
                         "benchmark": artifacts.benchmark,
                         "regime_analysis": regime_analysis,
                         "content_hash": snapshot.content_hash,
+                        "run_strategy_fn": _canary_run_fn,
                     },
                 )
             except Exception as exc:

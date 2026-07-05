@@ -78,6 +78,7 @@ async def run_research(
     control: Any = None,
     enable_oos: bool = True,          # D9/H5: OOS validation is the honest default (opt OUT explicitly)
     oos_db_path: str = ":memory:",    # per-run by default (disk-clean); set a file path for cross-run persistence
+    enable_leakage_canary: bool = True,  # M22: run the leakage canary on survivors (re-runs on synthetics)
     agent_mode: str = "rule_based",   # W0: rule_based | ai_assisted | full_ai
     provider: str | None = None,      # W0: LLM provider name (registry); None = auto/none
     model: str | None = None,         # W0: model id; None = provider default
@@ -237,6 +238,7 @@ async def run_research(
         budget_controller=budget_controller,
         on_event=on_event,
         control=control,
+        enable_leakage_canary=enable_leakage_canary,
     )
 
     # ── Generate report ───────────────────────────────────────

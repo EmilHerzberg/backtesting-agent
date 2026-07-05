@@ -18,10 +18,11 @@ from src.backend.backtesting.gates.basic_gates import (
     ProviderCapabilityGate,
     SpecValidationGate,
 )
+from src.backend.backtesting.gates.canary import LeakageCanaryGate
 from src.backend.backtesting.gates.cost_stress_gate import CostStressGate
 from src.backend.backtesting.gates.deflated_sharpe import DeflatedSharpeGate
 from src.backend.backtesting.gates.lag_gate import LagFragilityGate
-from src.backend.backtesting.gates.pipeline import GateContext, GatePipeline
+from src.backend.backtesting.gates.pipeline import GateContext, GatePipeline, GateSeverity
 
 
 # F1 — Rigor presets: named bundles of gate thresholds, applied in place over the
@@ -69,11 +70,16 @@ def build_default_pipeline(rigor: dict[str, float] | None = None, mode: str = "r
     if "dsr_threshold" in r:
         dsr.THRESHOLD = r["dsr_threshold"]
     lag = LagFragilityGate()
+    # M22: the leakage canary runs LAST (cost_rank 10 → only on survivors of the cheaper gates) and is
+    # SOFT — it surfaces suspected look-ahead / harness leakage as a strong weakness rather than
+    # hard-blocking, since the "candidate within noise band" arm can false-positive a weak-but-real edge.
+    # It stays inert (provisional pass, no cost) until the loop supplies a run_strategy_fn via the context.
+    canary = LeakageCanaryGate(n_paths=50)
+    canary.severity = GateSeverity.SOFT
     if mode == "regime":
         # Idea-surfacing: the QUALITY gates go SOFT (a FAIL is recorded as a weakness, non-fatal, no
         # short-circuit — the pipeline already treats SOFT fails this way). Integrity gates + the activity
         # floor + benchmark_relative (the anti-garbage / not-dominated floor) stay HARD.
-        from src.backend.backtesting.gates.pipeline import GateSeverity
         for _g in (perf, cost, dsr, lag):
             _g.severity = GateSeverity.SOFT
     return GatePipeline([
@@ -86,6 +92,7 @@ def build_default_pipeline(rigor: dict[str, float] | None = None, mode: str = "r
         cost,
         lag,
         dsr,
+        canary,
     ])
 
 
@@ -147,6 +154,7 @@ class ResearchGatekeeper:
                 "exposure_time": metrics.get("exposure_time", 0.0),
                 "commission": metrics.get("commission", 0.001),
                 "trade_returns": metrics.get("trade_returns", []),   # smart-activity per-trade edge
+                "ohlcv_df": metrics.get("ohlcv_df"),                 # M22: real OHLCV for canary synthetics
             },
             trades=[],
             returns=np.asarray(returns) if returns is not None else np.array([]),
@@ -160,6 +168,7 @@ class ResearchGatekeeper:
             n_trials_global=self.n_trials_global,
             trial_sr_variance=self.trial_sr_variance,
             trial_sr_variance_defaulted=self.trial_sr_variance_defaulted,
+            run_strategy_fn=context.get("run_strategy_fn"),          # M22: supplied per-candidate by the loop
         )
 
         report = self.pipeline.evaluate(ctx)
