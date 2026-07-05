@@ -11,7 +11,7 @@ from src.backend.backtesting.gates.basic_gates import (
     ProviderCapabilityGate,
     SpecValidationGate,
 )
-from src.backend.backtesting.gates.pipeline import GateContext, GateStatus
+from src.backend.backtesting.gates.pipeline import GateContext, GateSeverity, GateStatus
 
 
 def _ctx(**overrides):
@@ -52,6 +52,16 @@ class TestProviderCapabilityGate:
             bias_flags={"survivorship_bias": True, "research_conclusion_allowed": False}
         ))
         assert r.status == GateStatus.FAIL
+
+    @pytest.mark.finding("H24")
+    def test_survivorship_flag_is_a_soft_surface_not_a_hard_block(self):
+        # H24: the gate is SOFT — a survivorship-biased provider (default yfinance) is surfaced as a
+        # weakness, not a hard kill of every default run. (The FAIL status still records the risk.)
+        gate = ProviderCapabilityGate()
+        assert gate.severity == GateSeverity.SOFT
+        r = gate.check(_ctx(bias_flags={"survivorship_bias": True, "research_conclusion_allowed": False}))
+        assert r.status == GateStatus.FAIL and r.severity == GateSeverity.SOFT
+        assert r.is_hard_fail is False
 
     def test_eodhd_passes(self):
         r = ProviderCapabilityGate().check(_ctx(
@@ -191,12 +201,36 @@ class TestBenchmarkRelativeGate:
         ))
         assert r.status == GateStatus.FAIL
 
-    def test_positive_excess_return_passes(self):
+    @pytest.mark.finding("M19")
+    def test_positive_excess_with_worse_sharpe_no_longer_passes(self):
+        # M19: raw positive excess with a WORSE risk-adjusted profile (Sharpe 0.6 < bench 0.7) is not
+        # real outperformance — the vacuous Path C used to pass this. Now it FAILs (no path holds).
         r = BenchmarkRelativeGate().check(_ctx(
             metrics={"sharpe_annual": 0.6, "total_return": 0.25, "max_drawdown": -0.20},
             benchmark={"buy_hold_sharpe": 0.7, "buy_hold_return": 0.20, "buy_hold_max_drawdown": -0.15},
         ))
-        assert r.status == GateStatus.PASS  # path_c: excess return > 0
+        assert r.status == GateStatus.FAIL
+
+    @pytest.mark.finding("M19")
+    def test_positive_excess_with_non_worse_sharpe_passes_path_c(self):
+        # Positive excess AND no Sharpe degradation vs benchmark → legitimate Path C pass.
+        r = BenchmarkRelativeGate().check(_ctx(
+            metrics={"sharpe_annual": 0.75, "total_return": 0.25, "max_drawdown": -0.20},
+            benchmark={"buy_hold_sharpe": 0.70, "buy_hold_return": 0.20, "buy_hold_max_drawdown": -0.15},
+        ))
+        assert r.status == GateStatus.PASS
+        assert r.details["path_c_excess_return"] is True
+
+    @pytest.mark.finding("M19")
+    def test_drawdown_path_b_binds_with_benchmark_dd(self):
+        # M19 (Path B dead half): a big drawdown improvement with tolerable return sacrifice passes
+        # via Path B — which was structurally dead whenever buy_hold_max_drawdown wasn't forwarded.
+        r = BenchmarkRelativeGate().check(_ctx(
+            metrics={"sharpe_annual": 0.5, "total_return": 0.16, "max_drawdown": -0.08},
+            benchmark={"buy_hold_sharpe": 0.7, "buy_hold_return": 0.20, "buy_hold_max_drawdown": -0.40},
+        ))
+        assert r.status == GateStatus.PASS
+        assert r.details["path_b_drawdown"] is True
 
     def test_no_benchmark_passes(self):
         r = BenchmarkRelativeGate().check(_ctx(benchmark={}))

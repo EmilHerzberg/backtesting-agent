@@ -134,7 +134,8 @@ class GateReport:
 
     results: list[GateResult]
     passed: bool
-    first_failed_gate: str | None = None
+    first_failed_gate: str | None = None   # M21: the first HARD FAIL only — the actual kill cause
+    errored_gate: str | None = None        # M21: a HARD gate that raised (could not evaluate a blocker)
 
     @property
     def failed_hard(self) -> bool:
@@ -152,6 +153,7 @@ class GatePipeline:
         results: list[GateResult] = []
         short_circuited = False
         first_failed: str | None = None
+        errored_gate: str | None = None
 
         for gate in self.gates:
             if short_circuited:
@@ -165,12 +167,18 @@ class GatePipeline:
 
             results.append(result)
 
+            # M21: only a HARD FAIL is the kill cause and short-circuits. A SOFT fail is a recorded
+            # weakness — it must NOT be attributed as `first_failed_gate` (that misled the graveyard/
+            # critic into blaming the first soft weakness). A HARD gate that ERRORed could not evaluate
+            # a blocking check → treat as terminal (short-circuit) under a distinct `errored_gate`.
             if result.is_hard_fail:
                 short_circuited = True
                 if first_failed is None:
                     first_failed = result.gate_id
-            elif result.status == GateStatus.FAIL and first_failed is None:
-                first_failed = result.gate_id
+            elif result.status == GateStatus.ERROR and result.severity == GateSeverity.HARD:
+                short_circuited = True
+                if errored_gate is None:
+                    errored_gate = result.gate_id
 
         passed = all(
             r.status in (GateStatus.PASS, GateStatus.NOT_EVALUATED)
@@ -182,4 +190,5 @@ class GatePipeline:
             results=results,
             passed=passed,
             first_failed_gate=first_failed,
+            errored_gate=errored_gate,
         )

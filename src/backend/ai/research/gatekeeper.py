@@ -25,15 +25,19 @@ from src.backend.backtesting.gates.pipeline import GateContext, GatePipeline
 
 
 # F1 — Rigor presets: named bundles of gate thresholds, applied in place over the
-# hardcoded class constants. The `min_trades` values are CALIBRATED from the observed
-# daily-bar trade-count distribution (median ~12; the old hardcoded 50 passed 0%).
+# hardcoded class constants. These presets are the SINGLE SOURCE OF TRUTH for effective gate
+# thresholds (H4: the old config/gates.default.yaml was never loaded and diverged by ~10x — deleted).
+# The `min_trades` values are CALIBRATED from the observed daily-bar trade-count distribution
+# (median ~12; the old hardcoded 50 passed 0%).
 # `min_trades` = the smart-activity FLOOR (statistical minimum, df>=4); `activity_t` = the per-trade edge t*.
 # DATA-BACKED by SMART-ACTIVITY-CALIBRATION.md (226 rule_based t-stats): activity_t 1.0/1.65/2.33 → sensible
 # monotonic pass rates 34.5/12.4/4.4%; floor >= 5 (exploratory raised 3→5 — a t-stat on <5 trades is meaningless).
+# `min_stressed_sharpe` (M20) must be <= `min_sharpe` per preset, else the un-preset 0.5 cost-stress floor
+# makes the sub-0.5 exploratory tier structurally unreachable.
 RIGOR_PRESETS: dict[str, dict[str, float]] = {
-    "exploratory": {"min_trades": 5, "activity_t": 1.0,  "min_sharpe": 0.3, "dsr_threshold": 0.90, "cost_multiplier": 1.5, "benchmark_sharpe_min": 0.1},
-    "standard":    {"min_trades": 5, "activity_t": 1.65, "min_sharpe": 0.5, "dsr_threshold": 0.95, "cost_multiplier": 2.0, "benchmark_sharpe_min": 0.2},
-    "strict":      {"min_trades": 8, "activity_t": 2.33, "min_sharpe": 0.8, "dsr_threshold": 0.95, "cost_multiplier": 3.0, "benchmark_sharpe_min": 0.3},
+    "exploratory": {"min_trades": 5, "activity_t": 1.0,  "min_sharpe": 0.3, "min_stressed_sharpe": 0.2, "dsr_threshold": 0.90, "cost_multiplier": 1.5, "benchmark_sharpe_min": 0.1},
+    "standard":    {"min_trades": 5, "activity_t": 1.65, "min_sharpe": 0.5, "min_stressed_sharpe": 0.4, "dsr_threshold": 0.95, "cost_multiplier": 2.0, "benchmark_sharpe_min": 0.2},
+    "strict":      {"min_trades": 8, "activity_t": 2.33, "min_sharpe": 0.8, "min_stressed_sharpe": 0.6, "dsr_threshold": 0.95, "cost_multiplier": 3.0, "benchmark_sharpe_min": 0.3},
 }
 
 
@@ -60,6 +64,8 @@ def build_default_pipeline(rigor: dict[str, float] | None = None, mode: str = "r
         bench.SHARPE_IMPROVEMENT_MIN = r["benchmark_sharpe_min"]
     if "cost_multiplier" in r:
         cost.COST_MULTIPLIER = r["cost_multiplier"]
+    if "min_stressed_sharpe" in r:
+        cost.MIN_STRESSED_SHARPE = r["min_stressed_sharpe"]   # M20: bind the cost-stress floor to the tier
     if "dsr_threshold" in r:
         dsr.THRESHOLD = r["dsr_threshold"]
     lag = LagFragilityGate()

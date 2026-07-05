@@ -701,12 +701,16 @@ async def research_loop(
                     window_start=spec.get("window_start", "2010-01-01"),
                     window_end=spec.get("window_end", "2023-12-31"),
                 )
+                # H24: attach the provider's REAL bias flags (single source of truth in the capability
+                # registry) — the gate reads `survivorship_bias`, which the old hand-rolled
+                # {"prototype_data": True} never set, so the survivorship check was silently inert.
+                from src.backend.backtesting.registry.capabilities import get_bias_flags
                 snapshot = DataSnapshot(
                     security_id=state.current_asset,
                     window_start=spec.get("window_start", "2010-01-01"),
                     window_end=spec.get("window_end", "2023-12-31"),
                     provider=spec.get("provider", "yfinance"),
-                    bias_flags={"prototype_data": True} if spec.get("provider", "yfinance") == "yfinance" else {},
+                    bias_flags=get_bias_flags(spec.get("provider", "yfinance")),
                     data=raw_data,
                 )
                 emit("data_prepared", {
@@ -755,6 +759,7 @@ async def research_loop(
                 benchmark={
                     "buy_hold_return": metrics.get("buy_hold_return", 0.0),
                     "buy_hold_sharpe": metrics.get("buy_hold_sharpe", 0.0),
+                    "buy_hold_max_drawdown": metrics.get("buy_hold_max_drawdown", 0.0),  # M19: Path B was dead without it
                 },
                 regime_analysis=regime_analysis,
             )

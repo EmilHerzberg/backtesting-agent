@@ -1,6 +1,7 @@
 """Tests for ATS-1723/1724/1725 — GatePipeline + Gate ABC."""
 
 import numpy as np
+import pytest
 
 from src.backend.backtesting.gates.pipeline import (
     Gate,
@@ -125,3 +126,48 @@ class TestGatePipeline:
         report = pipeline.evaluate(_make_ctx())
         assert report.results[0].status == GateStatus.ERROR
         assert "boom" in report.results[0].details.get("error", "")
+
+
+class _FailSoftEarlyGate(Gate):
+    gate_id = "soft_early"
+    cost_rank = 1
+    severity = GateSeverity.SOFT
+
+    def check(self, ctx):
+        return self._fail(reason="soft weakness")
+
+
+class _ErrorHardGate(Gate):
+    gate_id = "error_hard"
+    cost_rank = 1
+    severity = GateSeverity.HARD
+
+    def check(self, ctx):
+        raise RuntimeError("could not evaluate")
+
+
+class TestKillCauseAttribution:
+    """M21 — the kill cause is the HARD fail, soft weaknesses are not blamed, hard ERROR is terminal."""
+
+    @pytest.mark.finding("M21")
+    def test_soft_fail_before_hard_fail_is_not_the_kill_cause(self):
+        # soft weakness (cost_rank 1) runs before the hard kill (cost_rank 2): the cause is the HARD
+        # gate, not the first soft weakness (which the pre-fix code misattributed).
+        report = GatePipeline([_FailSoftEarlyGate(), _FailHardGate()]).evaluate(_make_ctx())
+        assert report.first_failed_gate == "always_fail_hard"
+        assert report.passed is False
+
+    @pytest.mark.finding("M21")
+    def test_soft_fail_alone_has_no_kill_cause(self):
+        report = GatePipeline([_FailSoftEarlyGate(), _PassGate()]).evaluate(_make_ctx())
+        assert report.first_failed_gate is None      # a soft weakness is not a kill cause
+        assert report.passed is True
+
+    @pytest.mark.finding("M21")
+    def test_hard_gate_error_is_terminal_with_distinct_field(self):
+        report = GatePipeline([_ErrorHardGate(), _ExpensiveGate()]).evaluate(_make_ctx())
+        assert report.errored_gate == "error_hard"   # a hard gate that raised couldn't evaluate a blocker
+        assert report.first_failed_gate is None       # it's an ERROR, distinct from a FAIL
+        assert report.passed is False
+        downstream = next(r for r in report.results if r.gate_id == "expensive")
+        assert downstream.status == GateStatus.NOT_EVALUATED  # short-circuited

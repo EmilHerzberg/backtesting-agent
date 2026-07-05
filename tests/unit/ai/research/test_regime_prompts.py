@@ -85,8 +85,13 @@ def test_build_pipeline_regime_softens_quality_gates():
     assert sev["MinimumActivityGate"] == GateSeverity.HARD
 
 
-def test_build_pipeline_robustness_all_hard():
+def test_build_pipeline_robustness_gates_are_hard_except_provider_surface():
     from src.backend.ai.research.gatekeeper import build_default_pipeline, RIGOR_PRESETS
     from src.backend.backtesting.gates.pipeline import GateSeverity
+    from src.backend.backtesting.gates.basic_gates import ProviderCapabilityGate
     p = build_default_pipeline(RIGOR_PRESETS["standard"], mode="robustness")
-    assert all(g.severity == GateSeverity.HARD for g in p.gates)   # robustness invariance
+    # H24: the provider-capability gate is a SOFT surface (survivorship risk is flagged, not a hard
+    # block of every default yfinance run); every OTHER robustness gate stays HARD.
+    for g in p.gates:
+        expected = GateSeverity.SOFT if isinstance(g, ProviderCapabilityGate) else GateSeverity.HARD
+        assert g.severity == expected
