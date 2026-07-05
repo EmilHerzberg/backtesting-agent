@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **12 / 95** (H7, H1, M25, M24, H2-scoped, H6, **C1**, M26, H12, **C2**, M5, M6) + L17. **2 of 3 criticals fixed.** Clusters 1A + 1B + 1C complete.
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **16 / 95** (H7, H1, M25, M24, H2-scoped, H6, **C1**, M26, H12, **C2**, M5, M6, H9, H10, M2, M4) + L17. **2 of 3 criticals fixed.** Clusters 1A–1D complete; only 1E (C3) left in Phase 1.
 
 **Board mirror (local `tickets/`, staged for Jira — token was expired 2026-06-18):** Epic **ATS-1787**. Stories: Phase 0 = ATS-1788, Phase 1 = ATS-1789, Phase 2 = ATS-1790, Phase 3 = ATS-1791, Phase 4 = ATS-1792, Phase 5 = ATS-1793. Cluster sub-tasks = ATS-1794…1812 (one per cluster below, in order). Update ticket status via `board.py status <KEY> <status>` (auto-pushes to Jira when the token is valid).
 
@@ -56,10 +56,10 @@
 ### Cluster 1D — Metric formulas the optimizer/gates consume
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| H9 | High | mech | OPEN | | Sortino centered-std → uncentered + epsilon guard |
-| H10 | High | mech | OPEN | | 999.99 sentinels steer optimizer to degenerate strategies |
-| M2 | Med | mech | OPEN | | Calmar arithmetic → CAGR |
-| M4 | Med | mech | OPEN | | Composite drawdown penalty ~100x too weak (fraction units) |
+| H9 | High | mech | DONE (review) | `tests/unit/backtesting/test_metric_formulas_1d.py` | Standard target downside-deviation `sqrt(mean(min(excess,0)^2))` (no mean-centered std); a steady loser no longer explodes to ~1e15, single-negative no longer NaN. |
+| H10 | High | mech | DONE (review) | `…test_metric_formulas_1d.py` | 999.99 sentinels replaced with bounded caps (Sortino/profit-factor winsorized to 10) so the optimizer stops chasing degenerate no-loss strategies. |
+| M2 | Med | mech | DONE (review) | `…test_metric_formulas_1d.py` | Calmar uses CAGR (compound), not arithmetic `total_return/years`; min-duration guard + cap. |
+| M4 | Med | mech | DONE (review) | `…test_metric_formulas_1d.py` | Composite `max_drawdown` weight rescaled for fraction units (−1.5) so a 50% DD materially lowers the score (was ~100x too weak). |
 
 ### Cluster 1E — Real goal-criteria completion
 | ID | Sev | Bucket | Status | Test | Note |

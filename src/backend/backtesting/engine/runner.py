@@ -354,7 +354,7 @@ def _reslice_to_window(result: BacktestResult, warmup_bars: int, ppy: float = 25
         result.sharpe_ratio = 0.0
     run_max = eq.cummax()
     result.max_drawdown = float((1.0 - eq / run_max).max())
-    result.sortino_ratio = calculate_sortino(eq)
+    result.sortino_ratio = calculate_sortino(eq, periods_per_year=ppy)
     return result
 
 

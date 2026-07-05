@@ -9,6 +9,14 @@ import numpy as np
 import pandas as pd
 
 
+# H10 / M2 — winsorization caps so no-downside / no-loss / short-window cases return a bounded value
+# instead of a sentinel the optimizer chases into degenerate strategies.
+_SORTINO_CAP = 10.0
+_PROFIT_FACTOR_CAP = 10.0
+_CALMAR_CAP = 10.0
+_MIN_CALMAR_YEARS = 0.1  # M2 — min duration before annualizing (guards wild short-window CAGR)
+
+
 @dataclass
 class TradeDetail:
     """Detailed information about a single trade."""
@@ -102,44 +110,49 @@ def calculate_sortino(
     if returns.empty:
         return 0.0
 
-    excess = returns - risk_free_rate / periods_per_year
+    target = risk_free_rate / periods_per_year
+    excess = returns - target
     mean_excess = float(excess.mean())
 
-    # Downside deviation: std of negative returns only
-    downside = returns[returns < 0]
-    if downside.empty or downside.std() == 0:
-        return 0.0 if mean_excess <= 0 else 999.99
+    # H9: standard TARGET downside deviation = sqrt(mean(min(excess, 0)^2)) over ALL periods. The old
+    # code used the mean-centered std of only the negative returns, which collapses to ~0 for a steady
+    # loser (Sortino → ~1e15) and is NaN with a single negative return.
+    downside = np.minimum(excess.to_numpy(dtype=np.float64), 0.0)
+    downside_dev = float(np.sqrt(np.mean(downside ** 2)))
 
-    downside_std = float(downside.std())
+    if downside_dev <= 1e-12:
+        # No meaningful downside risk. H10: a bounded value, not a 999.99 sentinel the optimizer
+        # chases into degenerate near-no-trade strategies.
+        return 0.0 if mean_excess <= 0 else _SORTINO_CAP
+
     annualised_return = mean_excess * periods_per_year
-    annualised_downside = downside_std * math.sqrt(periods_per_year)
-
-    if annualised_downside == 0:
-        return 0.0
-
-    return annualised_return / annualised_downside
+    annualised_downside = downside_dev * math.sqrt(periods_per_year)
+    return float(np.clip(annualised_return / annualised_downside, -_SORTINO_CAP, _SORTINO_CAP))
 
 
 def calculate_calmar(
-    total_return_pct: float,
-    max_drawdown_pct: float,
+    total_return: float,
+    max_drawdown: float,
     years: float,
 ) -> float:
-    """Calculate the Calmar ratio.
+    """Calculate the Calmar ratio = CAGR / |max drawdown|.
 
     Args:
-        total_return_pct: Total return as a percentage (e.g. 25.0 for 25%).
-        max_drawdown_pct: Maximum drawdown as a positive percentage (e.g. 10.0).
+        total_return: Total return as a FRACTION (e.g. 0.25 for +25%), matching the runner.
+        max_drawdown: Maximum drawdown as a fraction (sign-agnostic; ``abs`` is used).
         years: Duration of the backtest in years.
 
     Returns:
-        Calmar ratio, or 0.0 when it cannot be computed.
+        Calmar ratio (winsorized), or 0.0 when it cannot be computed.
     """
-    if years <= 0 or max_drawdown_pct == 0:
+    if years < _MIN_CALMAR_YEARS or max_drawdown == 0:
         return 0.0
 
-    annualised_return = total_return_pct / years
-    return annualised_return / abs(max_drawdown_pct)
+    # M2: CAGR (compound annual growth), not arithmetic total_return / years — which over-states short
+    # windows (a 3-month window ×4-extrapolated) and misuses the return.
+    base = 1.0 + total_return
+    cagr = base ** (1.0 / years) - 1.0 if base > 0 else -1.0
+    return float(np.clip(cagr / abs(max_drawdown), -_CALMAR_CAP, _CALMAR_CAP))
 
 
 # ---------------------------------------------------------------------------- #
@@ -231,8 +244,8 @@ def calculate_profit_factor(trades: list[TradeDetail]) -> float:
         trades: List of :class:`TradeDetail` objects.
 
     Returns:
-        Profit factor (>1 means profitable). Returns ``float('inf')`` when
-        there are no losing trades, or 0.0 when there are no trades.
+        Profit factor (>1 means profitable), winsorized to ``_PROFIT_FACTOR_CAP``. Returns the cap
+        when there are no losing trades but some profit, or 0.0 when there are no trades.
     """
     if not trades:
         return 0.0
@@ -241,6 +254,8 @@ def calculate_profit_factor(trades: list[TradeDetail]) -> float:
     gross_loss = abs(sum(t.pnl for t in trades if t.pnl < 0))
 
     if gross_loss == 0:
-        return 999.99 if gross_profit > 0 else 0.0
+        # H10: bounded cap, not a 999.99 sentinel the optimizer chases into no-loss (near-no-trade)
+        # strategies.
+        return _PROFIT_FACTOR_CAP if gross_profit > 0 else 0.0
 
-    return gross_profit / gross_loss
+    return min(gross_profit / gross_loss, _PROFIT_FACTOR_CAP)
