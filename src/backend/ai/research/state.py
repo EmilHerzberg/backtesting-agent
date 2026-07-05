@@ -41,6 +41,9 @@ class GoalBrief:
     max_eur: float = 50.0
     max_seconds: int = 3600
     target_candidates: int = 3
+    # C3/M50 — structured numeric criteria parsed from goal_text at run start. Empty = no parsed
+    # criteria (fall back to a raw candidate count, e.g. tests that build GoalBrief directly).
+    criteria: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -181,6 +184,16 @@ class Candidate:
     holdout: dict[str, Any] = field(default_factory=dict)  # P2 — within-regime forward-slice hold-out result
 
 
+def _candidate_metrics(c: "Candidate") -> dict[str, Any]:
+    """A candidate's metrics as a dict keyed the way ``parse_criteria`` emits (C3/H30)."""
+    return {
+        "sharpe_annual": c.sharpe_annual,
+        "total_return": c.total_return,
+        "max_drawdown": c.max_drawdown,
+        "n_trades": c.n_trades,
+    }
+
+
 @dataclass
 class ResearchState:
     """Full state of an autonomous research session.
@@ -214,16 +227,29 @@ class ResearchState:
     oos_results: list[OOSResult] = field(default_factory=list)
     lineage_nodes: list = field(default_factory=list)  # ATSX-26: serialized lineage tree
 
+    def _criteria_satisfying(self) -> list["Candidate"]:
+        """Candidates that satisfy the user's parsed numeric criteria (C3). When no criteria were
+        parsed (``goal.criteria`` empty), every candidate counts — preserving the old raw-count
+        behaviour for callers that build a GoalBrief directly."""
+        crit = getattr(self.goal, "criteria", None) or []
+        if not crit:
+            return list(self.candidates)
+        from src.backend.ai.goals.criteria import candidate_meets_criteria
+
+        return [c for c in self.candidates if candidate_meets_criteria(_candidate_metrics(c), crit)]
+
     def goal_met(self) -> bool:
-        """Raw candidate count vs target (OOS-unaware; see validated_count for the Director)."""
-        return len(self.candidates) >= self.goal.target_candidates
+        """Whether enough candidates meet the user's criteria (C3 — not a raw candidate count)."""
+        return len(self._criteria_satisfying()) >= self.goal.target_candidates
 
     def validated_count(self, oos_enabled: bool) -> int:
-        """Candidates that count toward the goal. With OOS on, only OOS-PASS count (C2)."""
+        """Candidates that count toward the goal: they must satisfy the user's criteria (C3) and,
+        when OOS is on, have an OOS PASS."""
+        satisfying = self._criteria_satisfying()
         if not oos_enabled:
-            return len(self.candidates)
+            return len(satisfying)
         passed = {r.strategy_hash for r in self.oos_results if r.outcome == "PASS"}
-        return sum(1 for c in self.candidates if c.strategy_hash in passed)
+        return sum(1 for c in satisfying if c.strategy_hash in passed)
 
     def advance_asset(self) -> bool:
         """Move to next asset in queue. Returns False if exhausted."""

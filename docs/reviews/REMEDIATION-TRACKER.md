@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **16 / 95** (H7, H1, M25, M24, H2-scoped, H6, **C1**, M26, H12, **C2**, M5, M6, H9, H10, M2, M4) + L17. **2 of 3 criticals fixed.** Clusters 1A–1D complete; only 1E (C3) left in Phase 1.
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **19 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50) + L17, L22. **✅ All 3 criticals fixed. Phase 1 COMPLETE (all 5 clusters).**
 
 **Board mirror (local `tickets/`, staged for Jira — token was expired 2026-06-18):** Epic **ATS-1787**. Stories: Phase 0 = ATS-1788, Phase 1 = ATS-1789, Phase 2 = ATS-1790, Phase 3 = ATS-1791, Phase 4 = ATS-1792, Phase 5 = ATS-1793. Cluster sub-tasks = ATS-1794…1812 (one per cluster below, in order). Update ticket status via `board.py status <KEY> <status>` (auto-pushes to Jira when the token is valid).
 
@@ -64,10 +64,10 @@
 ### Cluster 1E — Real goal-criteria completion
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| C3 | **Crit** | spec | SPEC | | Parse goal at run start; count only criteria-satisfying — needs parser spec |
-| H30 | High | mech | OPEN | | Drawdown criterion vacuous (sign/scale/key) |
-| M50 | Med | dec | DECISION | | Criteria parser is dead code — wire (per C3) or delete |
-| L22 | Low | mech | BACKLOG | | return/win_rate/pf never parsed (fold into C3) |
+| C3 | **Crit** | spec | DONE (review) | `tests/unit/ai/research/test_goal_criteria_1e.py` | `parse_criteria` wired into `GoalBrief` at run start (run.py); `goal_met`/`validated_count` now count only candidates satisfying the user's criteria, not a raw candidate count. |
+| H30 | High | mech | DONE (review) | `…test_goal_criteria_1e.py` | Drawdown stored as a positive `<=` limit compared on `abs(dd)` (sign-agnostic); criteria emit canonical Candidate keys (`sharpe_annual`/`n_trades`) — no more vacuous/never-matching check. |
+| M50 | Med | dec | DONE (review) | `…test_goal_criteria_1e.py` | Parser wired (no longer dead code); `candidate_meets_criteria` skips non-applicable metrics. |
+| L22 | Low | mech | DONE | `…test_goal_criteria_1e.py` | Return/win-rate/profit-factor now parsed (canonical keys). |
 
 ---
 
