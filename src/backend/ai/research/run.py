@@ -76,8 +76,8 @@ async def run_research(
     on_start: Any = None,
     on_event: Any = None,
     control: Any = None,
-    enable_oos: bool = False,
-    oos_db_path: str = "oos_lockbox.db",
+    enable_oos: bool = True,          # D9/H5: OOS validation is the honest default (opt OUT explicitly)
+    oos_db_path: str = ":memory:",    # per-run by default (disk-clean); set a file path for cross-run persistence
     agent_mode: str = "rule_based",   # W0: rule_based | ai_assisted | full_ai
     provider: str | None = None,      # W0: LLM provider name (registry); None = auto/none
     model: str | None = None,         # W0: model id; None = provider default
@@ -114,7 +114,7 @@ async def run_research(
     if strategy_families is None:
         strategy_families = ["trend_following", "mean_reversion", "multi_factor"]  # F4
 
-    # F1: Strict rigor forces out-of-sample validation on.
+    # F1: Strict rigor forces out-of-sample validation on (also re-enables it if a caller opted out).
     if rigor == "strict":
         enable_oos = True
 

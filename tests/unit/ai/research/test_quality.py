@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from src.backend.ai.research.quality import quality_summary
+
+
+# D9/H5 Part 1: OOS validation is the honest DEFAULT (both the library entry point and the API request).
+@pytest.mark.finding("H5")
+def test_oos_is_enabled_by_default():
+    from src.backend.ai.research.router import StartRunRequest
+    from src.backend.ai.research.run import run_research
+
+    assert inspect.signature(run_research).parameters["enable_oos"].default is True
+    assert StartRunRequest.model_fields["enable_oos"].default is True
 
 
 def _report(activity=None, benchmark=None, dsr=None):
@@ -54,14 +66,27 @@ def test_moderate_and_weak():
     assert "did not beat buy-and-hold" in weak["headline"]
 
 
-# OFF/PENDING are neutral (CF-2): a strong edge still grades strong without OOS.
-def test_oos_off_neutral():
+# D9/H5: without a held-out PASS, even a strong in-sample edge is CAPPED at "moderate" — never "strong".
+@pytest.mark.finding("H5")
+def test_oos_off_caps_at_moderate():
     q = quality_summary(
         _report(activity={"tier": "adequate", "t_stat": 2.4}, benchmark={"excess_return": 0.06}),
         oos="", mode="robustness",
     )
     assert q["oos"] == "OFF"
-    assert q["tier"] == "strong"
+    assert q["tier"] == "moderate"                       # pre-D9 this was "strong"
+    assert "in-sample only (no hold-out)" in q["headline"]
+
+
+@pytest.mark.finding("H5")
+def test_oos_unevaluated_caps_at_moderate():
+    # A thin OOS sample (H17 UNEVALUATED) is inconclusive, not a pass → capped at moderate.
+    q = quality_summary(
+        _report(activity={"tier": "adequate", "t_stat": 2.4}, benchmark={"excess_return": 0.06}),
+        oos="UNEVALUATED", mode="robustness",
+    )
+    assert q["tier"] == "moderate"
+    assert "inconclusive" in q["headline"]
 
 
 # 3 — DSR provisional: flag OR trials<20 OR defaulted variance; solid only otherwise.

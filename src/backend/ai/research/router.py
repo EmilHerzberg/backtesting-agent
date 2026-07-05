@@ -46,7 +46,7 @@ class StartRunRequest(BaseModel):
     target_candidates: int = 3
     # F1/F2/F6 — start-options exposed to the UI
     rigor: str = "standard"          # exploratory | standard | strict
-    enable_oos: bool = False
+    enable_oos: bool = True          # D9/H5: OOS on by default (a run with it off cannot be badged "strong")
     seed: int = 42
     # W0 — agent mode + LLM provider (inert until W1; rule_based = no LLM, €0)
     agent_mode: str = "rule_based"   # rule_based | ai_assisted | full_ai
