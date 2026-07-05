@@ -12,7 +12,8 @@ import numpy as np
 import pytest
 
 from src.backend.ai.research.loop import _dsr_registry_inputs, _period_sharpe
-from src.backend.backtesting.gates.deflated_sharpe import deflated_sharpe
+from src.backend.backtesting.gates.deflated_sharpe import DeflatedSharpeGate, deflated_sharpe
+from src.backend.backtesting.gates.pipeline import GateContext
 
 
 @pytest.mark.finding("H1")
@@ -53,9 +54,37 @@ def test_annualized_variance_collapses_dsr_but_per_period_discriminates():
 @pytest.mark.finding("M25")
 def test_dsr_inputs_count_only_measured_trials_with_ddof1():
     samples = [0.05, 0.08, 0.03, 0.10]
-    n, var = _dsr_registry_inputs(samples)
+    n, var, defaulted = _dsr_registry_inputs(samples)
     assert n == 4                                            # measured trials, not total_iterations
     assert var == pytest.approx(float(np.var(samples, ddof=1)))  # ddof=1 (fixes N6 too)
-    # A single measured trial → provisional default variance, not a spurious 0.
-    assert _dsr_registry_inputs([0.05]) == (1, 0.001)
-    assert _dsr_registry_inputs([]) == (0, 0.001)
+    assert defaulted is False
+    # Too few measured trials → floored variance, explicitly flagged defaulted (M24), never a spurious 0.
+    assert _dsr_registry_inputs([0.05]) == (1, 0.001, True)
+    assert _dsr_registry_inputs([]) == (0, 0.001, True)
+
+
+def _dsr_ctx(returns, *, n_trials, sr_variance, defaulted):
+    return GateContext(
+        metrics={}, trades=[], returns=returns, equity_curve=[],
+        n_trials_global=n_trials, trial_sr_variance=sr_variance,
+        trial_sr_variance_defaulted=defaulted,
+    )
+
+
+@pytest.mark.finding("M24")
+def test_deflated_gate_flags_defaulted_variance_as_provisional():
+    """A defaulted (unmeasured) variance is provisional and explicitly flagged — never a firm verdict,
+    regardless of the magic floor value or the trial count."""
+    returns = np.random.default_rng(1).normal(0.001, 0.01, 300)
+    res = DeflatedSharpeGate().check(_dsr_ctx(returns, n_trials=50, sr_variance=0.001, defaulted=True))
+    assert res.details.get("sr_variance_defaulted") is True
+    assert res.details.get("provisional") is True
+
+
+@pytest.mark.finding("M24")
+def test_deflated_gate_measured_variance_not_flagged():
+    """A real measured variance with enough trials yields a firm verdict, flagged not-defaulted."""
+    returns = np.random.default_rng(2).normal(0.001, 0.01, 300)
+    res = DeflatedSharpeGate().check(_dsr_ctx(returns, n_trials=50, sr_variance=0.02, defaulted=False))
+    assert res.details.get("sr_variance_defaulted") is False
+    assert not res.details.get("provisional")  # firm PASS/FAIL, not provisional

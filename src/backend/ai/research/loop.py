@@ -69,7 +69,9 @@ class GatekeeperProtocol(Protocol):
         """Run gates and return gate_report dict."""
         ...
 
-    def update_registry_stats(self, n_trials: int, sr_variance: float) -> None:
+    def update_registry_stats(
+        self, n_trials: int, sr_variance: float, *, variance_defaulted: bool = False
+    ) -> None:
         """Update DSR inputs from the registry."""
         ...
 
@@ -271,18 +273,21 @@ def _period_sharpe(returns) -> float | None:
     return float(r.mean() / sd)
 
 
-def _dsr_registry_inputs(period_sharpes: list[float]) -> tuple[int, float]:
-    """Deflated-Sharpe multiplicity inputs (H1 / M25).
+def _dsr_registry_inputs(period_sharpes: list[float]) -> tuple[int, float, bool]:
+    """Deflated-Sharpe multiplicity inputs (H1 / M25 / M24).
 
-    Returns ``(n_trials, trial_sr_variance)`` where N is the number of gate-evaluable trials (those
-    that produced a measurable per-period Sharpe) and the variance is the per-period trial-Sharpe
-    variance (ddof=1) — the two share one scope, so the expected-max-Sharpe hurdle sits on the same
-    footing as the per-period ``sr_hat`` the gate computes. Replaces the old
-    ``(state.total_iterations, np.var(annualized_sharpes))`` which paired a padded iteration count
-    (errors/skips included) with an annualized variance ~252x too large."""
+    Returns ``(n_trials, trial_sr_variance, variance_defaulted)`` where N is the number of
+    gate-evaluable trials (those that produced a measurable per-period Sharpe) and the variance is
+    the per-period trial-Sharpe variance (ddof=1) — the two share one scope, so the expected-max-
+    Sharpe hurdle sits on the same footing as the per-period ``sr_hat`` the gate computes. When
+    fewer than two trials have been measured the variance cannot be estimated, so a floor is returned
+    with ``variance_defaulted=True`` (M24: explicit, not a magic-value sniff downstream). Replaces
+    the old ``(state.total_iterations, np.var(annualized_sharpes))`` which paired a padded iteration
+    count (errors/skips included) with an annualized variance ~252x too large."""
     n = len(period_sharpes)
-    variance = float(np.var(period_sharpes, ddof=1)) if n > 1 else 0.001
-    return n, variance
+    if n > 1:
+        return n, float(np.var(period_sharpes, ddof=1)), False
+    return n, 0.001, True
 
 
 def _train_split(window_start: str, window_end: str) -> str | None:
@@ -675,8 +680,10 @@ async def research_loop(
             state.phase = ResearchPhase.GATING
             # H1/M25: per-period trial-Sharpe variance + a trial count that reflects only
             # gate-evaluable trials (not state.total_iterations, which counts errors/skips).
-            _dsr_n_trials, sr_variance = _dsr_registry_inputs(_period_sharpe_values)
-            gatekeeper.update_registry_stats(_dsr_n_trials, sr_variance)
+            _dsr_n_trials, sr_variance, _sr_defaulted = _dsr_registry_inputs(_period_sharpe_values)
+            gatekeeper.update_registry_stats(
+                _dsr_n_trials, sr_variance, variance_defaulted=_sr_defaulted
+            )
             try:
                 gate_report = gatekeeper.evaluate(
                     metrics=metrics,

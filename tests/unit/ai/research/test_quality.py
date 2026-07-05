@@ -70,8 +70,13 @@ def test_dsr_provisional_paths():
     few = quality_summary(_report(dsr={"dsr": 0.97, "n_trials": 15, "sr_variance": 0.02}), mode="robustness")
     assert few["dsr"]["provisional"] is True  # trials < 20
 
-    defaulted = quality_summary(_report(dsr={"dsr": 0.97, "n_trials": 50, "sr_variance": 0.001}), mode="robustness")
-    assert defaulted["dsr"]["provisional"] is True  # defaulted variance (CS-4)
+    # M24: the gate now emits an explicit sr_variance_defaulted flag; quality reads that instead of
+    # sniffing the magic 0.001 value (a genuinely-measured 0.001 must NOT be mislabeled provisional).
+    defaulted = quality_summary(
+        _report(dsr={"dsr": 0.97, "n_trials": 50, "sr_variance": 0.001, "sr_variance_defaulted": True}),
+        mode="robustness",
+    )
+    assert defaulted["dsr"]["provisional"] is True  # defaulted variance flagged explicitly (CS-4/M24)
 
     solid = quality_summary(_report(dsr={"dsr": 0.97, "n_trials": 50, "sr_variance": 0.02}), mode="robustness")
     assert solid["dsr"]["provisional"] is False

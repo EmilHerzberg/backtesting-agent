@@ -69,6 +69,7 @@ class GateContext:
     benchmark: dict[str, Any] = field(default_factory=dict)
     n_trials_global: int = 0
     trial_sr_variance: float = 0.0
+    trial_sr_variance_defaulted: bool = False  # M24: variance is a floored default, not a measurement
 
 
 class Gate(ABC):

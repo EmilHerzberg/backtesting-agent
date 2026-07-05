@@ -77,31 +77,46 @@ class DeflatedSharpeGate(Gate):
     def check(self, ctx: GateContext) -> GateResult:
         n_trials = ctx.n_trials_global
         sr_variance = ctx.trial_sr_variance
+        # M24: track whether the variance is a floored default (unmeasured) explicitly, instead of
+        # sniffing the magic 0.001 value downstream. Upstream may already have flagged it; a
+        # non-positive value here is defaulted too.
+        sr_variance_defaulted = bool(ctx.trial_sr_variance_defaulted)
+        if sr_variance <= 0:
+            sr_variance = 0.001  # small default to avoid division by zero
+            sr_variance_defaulted = True
 
         if n_trials < 2:
             return self._pass(
-                reason="too few trials for DSR, provisional pass", provisional=True,
+                reason="too few trials for DSR, provisional pass",
+                provisional=True,
+                n_trials=n_trials,
+                sr_variance=sr_variance,
+                sr_variance_defaulted=True,
             )
 
         returns = ctx.returns
         if returns is None or len(returns) < 3:
             return self._fail(reason="insufficient return data for DSR")
 
-        if sr_variance <= 0:
-            sr_variance = 0.001  # small default to avoid division by zero
-
         dsr = deflated_sharpe(returns, n_trials, sr_variance)
 
-        is_provisional = n_trials < self.PROVISIONAL_BELOW
+        # A defaulted (unmeasured) variance can never be a firm PASS/FAIL — it stays provisional.
+        is_provisional = n_trials < self.PROVISIONAL_BELOW or sr_variance_defaulted
 
         if is_provisional:
+            why = (
+                f"only {n_trials} trials"
+                if n_trials < self.PROVISIONAL_BELOW
+                else "trial-Sharpe variance unmeasured"
+            )
             return self._pass(
                 value=dsr,
                 dsr=dsr,
                 n_trials=n_trials,
                 sr_variance=sr_variance,
+                sr_variance_defaulted=sr_variance_defaulted,
                 provisional=True,
-                reason=f"DSR={dsr:.3f}, provisional (only {n_trials} trials)",
+                reason=f"DSR={dsr:.3f}, provisional ({why})",
             )
 
         if dsr >= self.THRESHOLD:
@@ -110,6 +125,7 @@ class DeflatedSharpeGate(Gate):
                 dsr=dsr,
                 n_trials=n_trials,
                 sr_variance=sr_variance,
+                sr_variance_defaulted=sr_variance_defaulted,
             )
 
         return self._fail(
@@ -119,4 +135,5 @@ class DeflatedSharpeGate(Gate):
             dsr=dsr,
             n_trials=n_trials,
             sr_variance=sr_variance,
+            sr_variance_defaulted=sr_variance_defaulted,
         )

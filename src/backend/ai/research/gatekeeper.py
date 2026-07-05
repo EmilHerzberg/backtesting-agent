@@ -96,11 +96,16 @@ class ResearchGatekeeper:
         self.pipeline = build_default_pipeline(RIGOR_PRESETS.get(rigor, RIGOR_PRESETS["standard"]), mode=mode)
         self.n_trials_global = n_trials_global
         self.trial_sr_variance = trial_sr_variance
+        self.trial_sr_variance_defaulted = False
 
-    def update_registry_stats(self, n_trials: int, sr_variance: float) -> None:
-        """Update DSR inputs from the registry."""
+    def update_registry_stats(
+        self, n_trials: int, sr_variance: float, *, variance_defaulted: bool = False
+    ) -> None:
+        """Update DSR inputs from the registry (M24: carry an explicit defaulted flag rather than
+        letting downstream sniff the magic floor value)."""
         self.n_trials_global = n_trials
-        self.trial_sr_variance = max(sr_variance, 0.001)
+        self.trial_sr_variance = sr_variance if sr_variance > 0.0 else 0.001
+        self.trial_sr_variance_defaulted = bool(variance_defaulted) or sr_variance <= 0.0
 
     def evaluate(
         self,
@@ -147,6 +152,7 @@ class ResearchGatekeeper:
             benchmark=benchmark,
             n_trials_global=self.n_trials_global,
             trial_sr_variance=self.trial_sr_variance,
+            trial_sr_variance_defaulted=self.trial_sr_variance_defaulted,
         )
 
         report = self.pipeline.evaluate(ctx)
