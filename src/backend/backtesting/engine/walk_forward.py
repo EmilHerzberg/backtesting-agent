@@ -99,6 +99,16 @@ class WalkForwardResult:
     pct_valid_windows: float = 0.0
     is_strategy_validated: bool = False
     combined_equity: list[float] = field(default_factory=list)
+    crashed_windows: int = 0  # H6: windows that failed to optimise/evaluate — kept in the denominator
+
+
+def _window_is_valid(test_result: "BacktestResult", threshold: float) -> bool:
+    """H6: a window is 'valid' only if the strategy actually traded (>=1 trade) AND the test Sharpe
+    clears the threshold. A zero-trade or NaN-Sharpe window (the runner maps NaN -> 0.0) must NOT be
+    counted valid — otherwise a strategy that never trades out-of-sample reports 100% valid windows.
+    Note this also masks C1's worst symptom: a cold-started window that produces no trades fails here
+    instead of passing."""
+    return test_result.trade_count >= 1 and test_result.sharpe_ratio > threshold
 
 
 def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
@@ -128,6 +138,7 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
 
     wf_windows: list[WalkForwardWindow] = []
     combined_equity: list[float] = []
+    crashed = 0  # H6: optimise/evaluate failures still count against the valid-window denominator
 
     for i, (train_df, test_df) in enumerate(windows):
         logger.info(
@@ -153,6 +164,7 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
             opt_result = optimize(opt_config)
         except BacktestError as exc:
             logger.warning("Window %d optimisation failed: %s", i, exc)
+            crashed += 1
             continue
 
         best_params = opt_result.best_params
@@ -172,6 +184,7 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
             test_result = run_backtest(test_bt_config)
         except BacktestError as exc:
             logger.warning("Window %d test evaluation failed: %s", i, exc)
+            crashed += 1
             continue
 
         # ---- Overfitting score ---------------------------------------- #
@@ -183,7 +196,7 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
         else:
             overfitting_score = 0.0
 
-        is_valid = test_sharpe >= config.validation_threshold
+        is_valid = _window_is_valid(test_result, config.validation_threshold)
 
         wf_windows.append(
             WalkForwardWindow(
@@ -204,27 +217,34 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
         if test_result.equity_curve:
             combined_equity.extend(test_result.equity_curve)
 
-    return _build_wf_result(wf_windows, combined_equity)
+    return _build_wf_result(wf_windows, combined_equity, crashed)
 
 
 def _build_wf_result(
     windows: list[WalkForwardWindow],
     combined_equity: list[float],
+    crashed_windows: int = 0,
 ) -> WalkForwardResult:
-    """Aggregate per-window results into a :class:`WalkForwardResult`."""
-    if not windows:
+    """Aggregate per-window results into a :class:`WalkForwardResult`.
+
+    H6: the valid-window percentage is over *attempted* windows (evaluated + crashed), so a run where
+    most windows crashed and one passed does not report 100% valid.
+    """
+    total = len(windows) + crashed_windows
+    if total == 0:
         return WalkForwardResult()
 
     test_sharpes = [w.test_result.sharpe_ratio for w in windows]
     overfitting_scores = [w.overfitting_score for w in windows]
     valid_count = sum(1 for w in windows if w.is_valid)
-    pct_valid = (valid_count / len(windows)) * 100.0
+    pct_valid = (valid_count / total) * 100.0
 
     return WalkForwardResult(
         windows=windows,
-        avg_test_sharpe=sum(test_sharpes) / len(test_sharpes),
-        avg_overfitting_score=sum(overfitting_scores) / len(overfitting_scores),
+        avg_test_sharpe=(sum(test_sharpes) / len(test_sharpes)) if test_sharpes else 0.0,
+        avg_overfitting_score=(sum(overfitting_scores) / len(overfitting_scores)) if overfitting_scores else 0.0,
         pct_valid_windows=pct_valid,
         is_strategy_validated=pct_valid > 50.0,
         combined_equity=combined_equity,
+        crashed_windows=crashed_windows,
     )
