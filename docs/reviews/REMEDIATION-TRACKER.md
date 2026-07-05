@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **8 / 95** (H7, H1, M25, M24, H2-scoped, H6, **C1**, M26). 1 of 3 criticals fixed. 1B nearly done (H12 + M3 remain).
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **9 / 95** (H7, H1, M25, M24, H2-scoped, H6, **C1**, M26, H12). 1 of 3 criticals fixed. **Clusters 1A + 1B complete** (M3 materially done, remainder tracked).
 
 **Board mirror (local `tickets/`, staged for Jira — token was expired 2026-06-18):** Epic **ATS-1787**. Stories: Phase 0 = ATS-1788, Phase 1 = ATS-1789, Phase 2 = ATS-1790, Phase 3 = ATS-1791, Phase 4 = ATS-1792, Phase 5 = ATS-1793. Cluster sub-tasks = ATS-1794…1812 (one per cluster below, in order). Update ticket status via `board.py status <KEY> <status>` (auto-pushes to Jira when the token is valid).
 
@@ -43,7 +43,7 @@
 | M26 | Med | mech | DONE (review) | `tests/unit/ai/research/test_warmup_slices_m26.py` | `_prepare_with_warmup` reaches back a lookback-sized prefix; `executor.run(..., warmup_bars=)` threads it into all three slices (decay/hold-out/OOS). |
 | M3 | Med | mech | PARTIAL | `test_warmup_c1.py`, `test_warmup_slices_m26.py` | Flat warm-up no longer dilutes the **OOS/hold-out/decay/walk-forward** metrics (C1 reslice). The **main IS window** still passes the full per-bar series (incl. leading flat) as "daily returns" — remaining piece. |
 | H6 | High | mech | DONE (review) | `tests/unit/backtesting/test_walk_forward_validity_h6.py` | `_window_is_valid` requires ≥1 trade + Sharpe>threshold; crashed windows kept in the denominator (`crashed_windows`). |
-| H12 | High | mech | OPEN | | Pandas indicators emit signals during warm-up; HOLD→0.0 defeats NaN skip |
+| H12 | High | mech | DONE (review) | `tests/unit/backtesting/test_indicator_warmup_h12.py` | `min_periods` on every ewm chain (RSI/EMA/MACD/ADX/ATR/Keltner) + NaN guards on MACD/Keltner `signal()` + generator `_signal_fn` maps warm-up→NaN (not 0.0). Also first tests for the pandas indicator library (partial **M18**). |
 
 ### Cluster 1C — Interval-aware annualization
 | ID | Sev | Bucket | Status | Test | Note |

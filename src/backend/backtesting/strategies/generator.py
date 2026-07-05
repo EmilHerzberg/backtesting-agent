@@ -166,10 +166,17 @@ def generate_strategy(
                         })
                         sig = ind.signal(df)
                         # Convert to numeric: BUY=+1, SELL=-1, HOLD=0
-                        numeric = pd.Series(0.0, index=sig.index)
-                        numeric[sig == Signal.BUY] = 1.0
-                        numeric[sig == Signal.SELL] = -1.0
-                        return numeric.values
+                        arr = np.zeros(len(sig), dtype=float)
+                        arr[(sig == Signal.BUY).to_numpy()] = 1.0
+                        arr[(sig == Signal.SELL).to_numpy()] = -1.0
+                        # H12: warm-up bars (indicator not yet converged) → NaN, not a spurious neutral
+                        # 0.0, so backtesting.py's leading-NaN skip keeps the strategy from trading
+                        # before every indicator has warmed up.
+                        try:
+                            arr[ind.compute(df).isna().to_numpy()] = np.nan
+                        except Exception:
+                            pass
+                        return arr
                     return _signal_fn
 
                 sig = self.I(
