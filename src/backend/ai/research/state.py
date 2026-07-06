@@ -178,6 +178,7 @@ class Candidate:
     benchmark: dict[str, Any] = field(default_factory=dict)
     equity_curve: list = field(default_factory=list)
     hypothesis_id: str = ""
+    lineage_id: str = ""          # M47: the lineage at CREATION time (not the flush-time current lineage)
     # P1 Chunk C — regime firewall (empty for robustness runs).
     validation_status: str = ""   # "unvalidated" for regime at P1 (no within-regime hold-out until P2)
     confidence: str = ""          # F-13 unified confidence (weaker of sample-tier + overfit-validation)

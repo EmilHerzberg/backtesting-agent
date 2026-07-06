@@ -24,6 +24,18 @@ logger = logging.getLogger(__name__)
 _SOURCE = "yahoo"
 
 
+def _to_naive_utc(dt):
+    """Normalise a bar timestamp to naive-UTC — the representation cached rows round-trip as (SQLite
+    drops tzinfo). Shared by the dedup key and the H21 replace-range bounds so both agree."""
+    if hasattr(dt, "to_pydatetime"):
+        dt = dt.to_pydatetime()
+    if getattr(dt, "tzinfo", None) is not None:
+        dt = dt.astimezone(timezone.utc)
+    elif hasattr(dt, "replace"):
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.replace(tzinfo=None) if hasattr(dt, "replace") else dt
+
+
 def _sync_db_url() -> str:
     """Convert the async database URL to a synchronous one."""
     url = settings.database_url
@@ -82,22 +94,23 @@ class CacheManager:
                 need_fetch = True
 
         if not cached_df.empty:
-            # Incremental update: only fetch data newer than latest cached bar
             latest_cached = cached_df.index.max().to_pydatetime()
             if hasattr(latest_cached, "tzinfo") and latest_cached.tzinfo:
                 latest_cached = latest_cached.replace(tzinfo=None)
             now = datetime.now(timezone.utc).replace(tzinfo=None)
-            # If latest cached bar is more than 1 interval old, fetch new data
+            # If the latest cached bar is more than ~1 interval old, the cache is stale.
             gap_threshold = _interval_to_timedelta(interval) * 2
             if now - latest_cached > gap_threshold:
-                incremental_start = latest_cached - timedelta(days=1)  # small overlap
                 need_fetch = True
-                fetch_start = incremental_start.replace(tzinfo=timezone.utc)
+                # H21: refetch the FULL requested window (fetch_start stays = start), never just the
+                # tail — an auto-adjusted refresh re-bases the whole series, so a tail-append would
+                # leave the cached head on a stale basis.
 
         if need_fetch:
             fresh_df = self._provider.fetch_ohlcv(symbol, interval, fetch_start, end)
             if not fresh_df.empty:
-                self._store_cache(symbol, interval, fresh_df)
+                # H21: replace the window's bars so the cached series is a single-basis snapshot.
+                self._store_cache(symbol, interval, fresh_df, replace=True)
                 # Reload from cache for consistent result
                 cached_df = self._load_cache(symbol, interval, start, end)
 
@@ -196,9 +209,31 @@ class CacheManager:
         symbol: str,
         interval: BarInterval,
         df: pd.DataFrame,
+        *,
+        replace: bool = False,
     ) -> None:
-        """Persist DataFrame rows into PriceCacheDB, skipping existing timestamps."""
+        """Persist DataFrame rows into PriceCacheDB, skipping existing timestamps.
+
+        H21: with ``replace=True``, existing bars spanning ``df``'s range are deleted first, so the
+        window is re-stored as a single-adjustment-basis snapshot instead of appending a re-based
+        (auto-adjusted) tail onto stale bars — which produced a price discontinuity at the seam after
+        every split/dividend.
+        """
         with Session(self._engine) as session:
+            if replace and not df.empty:
+                lo = _to_naive_utc(df.index.min())
+                hi = _to_naive_utc(df.index.max())
+                session.execute(
+                    delete(PriceCacheDB).where(
+                        PriceCacheDB.symbol == symbol,
+                        PriceCacheDB.interval == interval.value,
+                        PriceCacheDB.source == self._source,
+                        PriceCacheDB.timestamp >= lo,
+                        PriceCacheDB.timestamp <= hi,
+                    )
+                )
+                session.commit()
+
             # Gather existing timestamps to avoid duplicates
             existing_stmt = (
                 select(PriceCacheDB.timestamp)
@@ -209,21 +244,24 @@ class CacheManager:
                 )
             )
             result = session.execute(existing_stmt).scalars().all()
+            # H23: the dedup key must be naive-UTC — the SAME representation the row round-trips as.
+            # SQLite drops tzinfo, so a stored UTC bar reads back naive-UTC (e.g. 05:00). The old code
+            # keyed new rows on naive-LOCAL time (00:00 NY), which never matched the stored 05:00, so
+            # every overlapping bar was re-inserted (IntegrityError / duplicate rows) on real yfinance data.
             existing_ts = {
-                t.replace(tzinfo=None) if t.tzinfo else t for t in result
+                (t.astimezone(timezone.utc) if t.tzinfo else t).replace(tzinfo=None) for t in result
             }
 
             new_rows = []
             for ts, row in df.iterrows():
                 dt = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
                 if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
-                    dt_naive = dt.replace(tzinfo=None)
                     dt_utc = dt.astimezone(timezone.utc)
                 else:
-                    dt_naive = dt
                     dt_utc = dt.replace(tzinfo=timezone.utc) if hasattr(dt, "replace") else dt
+                dt_key = dt_utc.replace(tzinfo=None) if hasattr(dt_utc, "replace") else dt_utc
 
-                if dt_naive in existing_ts:
+                if dt_key in existing_ts:
                     continue
 
                 new_rows.append(PriceCacheDB(

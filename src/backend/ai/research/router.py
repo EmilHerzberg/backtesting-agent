@@ -607,7 +607,7 @@ async def get_run_state(
         status=row["status"],
         used_eur=row["used_eur"],
         max_seconds=row["max_seconds"],
-        started_at=row["started_at"].isoformat() if row["started_at"] else None,
+        started_at=row["started_at"],   # M53: already a UTC-marked ISO string from persistence._utc_iso
         current_lineage=row["current_lineage"],
         agent_mode=row.get("agent_mode", "rule_based"),   # D1: persisted path now surfaces these
         mode=row.get("mode", "robustness"),
