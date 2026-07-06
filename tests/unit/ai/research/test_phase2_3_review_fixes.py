@@ -61,18 +61,60 @@ def test_default_fetch_makes_yfinance_end_inclusive(monkeypatch):
         def __init__(self, symbol):
             pass
 
-        def history(self, start=None, end=None):
-            captured["end"] = end
-            idx = pd.date_range(start, periods=3, freq="D")
+        def history(self, **kwargs):   # now flows via YahooProvider, which also passes interval=
+            captured["end"] = kwargs.get("end")
+            idx = pd.date_range(kwargs.get("start"), periods=3, freq="D")
             return pd.DataFrame(
                 {"Open": [1, 1, 1], "High": [1, 1, 1], "Low": [1, 1, 1], "Close": [1, 1, 1], "Volume": [1, 1, 1]},
                 index=idx,
             )
 
     monkeypatch.setattr(yfinance, "Ticker", _Ticker)
-    runmod._default_fetch("AAPL", "2020-01-01", "2020-12-31")
-    # M32: yfinance end is EXCLUSIVE → pass end+1 day so the last requested bar (2020-12-31) is included.
+    df = runmod._default_fetch("AAPL", "2020-01-01", "2020-12-31")
+    # M32: yfinance end is EXCLUSIVE → the provider passes end+1 day so 2020-12-31 is included.
     assert captured["end"] == "2021-01-01"
+    assert list(df.columns) == ["Open", "High", "Low", "Close", "Volume"]
+
+
+def test_in_memory_cache_collapses_redundant_fetches():
+    """Provider wiring: prepare() is called many times per run for the same (asset, window); the
+    in-memory per-run cache must fetch each distinct window ONCE (speed + fewer provider hits, no DB)."""
+    from src.backend.ai.research.run import _SimpleDataAgent
+
+    calls: list = []
+
+    def _fake(sec, s, e):
+        calls.append((sec, s, e))
+        return pd.DataFrame({c: [1, 1, 1] for c in ["Open", "High", "Low", "Close", "Volume"]},
+                            index=pd.date_range(s, periods=3, freq="D"))
+
+    agent = _SimpleDataAgent(fetch_fn=_fake)
+    agent.prepare("AAPL", "2020-01-01", "2020-12-31")
+    agent.prepare("AAPL", "2020-01-01", "2020-12-31")   # same window → cached
+    agent.prepare("MSFT", "2020-01-01", "2020-12-31")   # different asset → fetched
+    assert len(calls) == 2                              # AAPL once + MSFT once, not 3
+
+
+def test_use_price_cache_selects_persistent_backend(monkeypatch):
+    """use_price_cache=True routes through the persistent CacheManager (paid/intraday quota); the
+    yfinance-daily default (False) stays persistence-free so the server DB doesn't grow."""
+    import src.backend.ai.research.run as runmod
+    import src.backend.marketdata.cache as cachemod
+
+    built: dict = {}
+
+    class _FakeCM:
+        def __init__(self, provider=None):
+            built["cm"] = True
+
+        def get_or_fetch(self, *a, **k):
+            return pd.DataFrame()
+
+    monkeypatch.setattr(cachemod, "CacheManager", _FakeCM)
+    off = runmod._SimpleDataAgent()                           # default: no persistence
+    on = runmod._SimpleDataAgent(use_price_cache=True)        # opt-in: persistent
+    assert off._fetch is runmod._default_fetch
+    assert isinstance(on._fetch, runmod._CachedFetch) and built["cm"] is True
 
 
 async def test_requested_oos_that_cannot_init_raises_not_silently_in_sample(monkeypatch):

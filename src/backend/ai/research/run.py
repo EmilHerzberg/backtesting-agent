@@ -33,42 +33,90 @@ from src.backend.backtesting.validation.lineage import LineageTracker
 logger = logging.getLogger(__name__)
 
 
-def _default_fetch(security_id: str, start: str, end: str):
-    """Fetch OHLCV data via yfinance (default, free)."""
-    try:
-        from datetime import date, timedelta
+_OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 
-        import yfinance as yf
-        ticker = yf.Ticker(security_id)
-        # M32 (review): yfinance history(end=...) is EXCLUSIVE. Every other provider + the frozen
-        # snapshot treat end as INCLUSIVE, so without +1 day the research loop drops the last requested
-        # bar and disagrees by one bar with the CLI/YahooProvider path. Match the inclusive contract.
-        end_excl = end
-        try:
-            end_excl = (date.fromisoformat(str(end)[:10]) + timedelta(days=1)).isoformat()
-        except Exception:
-            pass
-        df = ticker.history(start=start, end=end_excl)
-        if df.empty:
+
+def _make_provider():
+    """The marketdata provider for the research loop. Default yahoo; set ``settings.data_provider`` to
+    another name (e.g. alphavantage) to route the whole loop through that provider's adjustment
+    handling. Stateless — no persistence."""
+    from src.backend.marketdata.provider import create_provider
+
+    name = "yahoo"
+    try:
+        from src.backend.shared.config import settings
+        name = getattr(settings, "data_provider", None) or "yahoo"
+    except Exception:
+        pass
+    return create_provider(name)
+
+
+def _to_date(s):
+    from datetime import date
+
+    try:
+        return date.fromisoformat(str(s)[:10]) if s else None
+    except Exception:
+        return None
+
+
+def _default_fetch(security_id: str, start: str, end: str):
+    """Fetch daily OHLCV through the marketdata PROVIDER layer (YahooProvider by default), not raw
+    ``yf.Ticker`` — so the research loop shares the provider-layer correctness fixes (M32 end-inclusive,
+    adjustment conventions, priority-aggregation) with the CLI. Stateless: no persistence, no DB growth."""
+    from src.backend.shared.types import BarInterval
+
+    df = _make_provider().fetch_ohlcv(security_id, BarInterval.ONE_DAY, _to_date(start), _to_date(end))
+    if df is None or df.empty:
+        raise ValueError(f"No data for {security_id}")
+    for col in _OHLCV:
+        if col not in df.columns:
+            raise ValueError(f"Missing column {col} in {security_id} data")
+    return df[_OHLCV]
+
+
+class _CachedFetch:
+    """Opt-in PERSISTENT (DB) fetch via CacheManager — reserved for paid providers / intraday where
+    re-fetching costs API quota. NOT the yfinance-daily default (which stays persistence-free so the
+    server DB doesn't grow). One CacheManager per run (its engine is built once)."""
+
+    def __init__(self):
+        from src.backend.marketdata.cache import CacheManager
+
+        self._cm = CacheManager(provider=_make_provider())
+
+    def __call__(self, security_id: str, start: str, end: str):
+        from src.backend.shared.types import BarInterval
+
+        df = self._cm.get_or_fetch(security_id, BarInterval.ONE_DAY, _to_date(start), _to_date(end))
+        if df is None or df.empty:
             raise ValueError(f"No data for {security_id}")
-        # Ensure standard column names.
-        df = df.rename(columns={"Stock Splits": "Stock_Splits"})
-        for col in ("Open", "High", "Low", "Close", "Volume"):
-            if col not in df.columns:
-                raise ValueError(f"Missing column {col} in {security_id} data")
-        return df[["Open", "High", "Low", "Close", "Volume"]]
-    except ImportError:
-        raise ImportError("yfinance is required for default data fetching. Install: pip install yfinance")
+        return df[_OHLCV]
 
 
 class _SimpleDataAgent:
-    """Minimal data agent using yfinance or a custom fetch function."""
+    """Data agent: provider-layer fetch + an in-memory PER-RUN cache (no DB growth). The research loop
+    calls prepare() many times per run for the same (asset, window); memoizing collapses those into one
+    fetch — big speed win + fewer provider hits — while the cache is discarded when the run ends.
+    ``use_price_cache=True`` routes through the persistent DB cache instead (paid/intraday quota)."""
 
-    def __init__(self, fetch_fn=None):
-        self._fetch = fetch_fn or _default_fetch
+    def __init__(self, fetch_fn=None, *, use_price_cache: bool = False):
+        self._mem: dict = {}
+        if fetch_fn is not None:
+            self._fetch = fetch_fn
+        elif use_price_cache:
+            self._fetch = _CachedFetch()
+        else:
+            self._fetch = _default_fetch
 
     def prepare(self, security_id: str, window_start: str, window_end: str):
-        return self._fetch(security_id, window_start, window_end)
+        key = (security_id, window_start, window_end)
+        df = self._mem.get(key)
+        if df is None:
+            df = self._fetch(security_id, window_start, window_end)
+            self._mem[key] = df
+        # Defensive copy: callers/backtesting.py may slice or annotate; keep the cached frame pristine.
+        return df.copy() if df is not None else df
 
 
 async def run_research(
@@ -89,6 +137,8 @@ async def run_research(
     enable_oos: bool = True,          # D9/H5: OOS validation is the honest default (opt OUT explicitly)
     oos_db_path: str = ":memory:",    # per-run by default (disk-clean); set a file path for cross-run persistence
     enable_leakage_canary: bool = True,  # M22: run the leakage canary on survivors (re-runs on synthetics)
+    use_price_cache: bool = False,       # persist fetched bars in the DB cache (paid/intraday quota);
+                                         # OFF for the yfinance-daily default so the server DB doesn't grow
     agent_mode: str = "rule_based",   # W0: rule_based | ai_assisted | full_ai
     provider: str | None = None,      # W0: LLM provider name (registry); None = auto/none
     model: str | None = None,         # W0: model id; None = provider default
@@ -215,7 +265,7 @@ async def run_research(
         ledger=ledger,
         mode=mode, window_start=train_ws, window_end=train_we, goal=goal,
     )
-    data_agent = _SimpleDataAgent(fetch_fn=fetch_fn)
+    data_agent = _SimpleDataAgent(fetch_fn=fetch_fn, use_price_cache=use_price_cache)
     orchestrator = RuleBasedOrchestrator(DirectorConfig(oos_enabled=enable_oos))
     lineage_tracker = LineageTracker()
     budget_controller = AgentBudgetController()
