@@ -108,9 +108,9 @@
 ### Cluster 3A — Market-data adjustment layer
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| H21 | High | spec | SPEC | | Cache merges back-adjusted prices — needs design (raw+events vs snapshots) |
+| H21 | High | spec | DONE | `test_marketdata_cache_3a.py` | immutable-snapshot semantics: refresh refetches the FULL window and replaces the range (single adjustment basis), never merges a re-based tail. (adjustment-mode cache-key = small follow-up) |
 | H22 | High | mech | OPEN | | Providers mix adjusted/unadjusted; fallback compatibility |
-| H23 | High | mech | OPEN | | tz dedup bug crashes/duplicates on real yfinance data |
+| H23 | High | mech | DONE | `test_marketdata_cache_3a.py` | dedup key normalised to naive-UTC (`_to_naive_utc`) — matches the stored round-trip, so real tz-aware yfinance bars dedup instead of re-inserting |
 | M32 | Med | mech | OPEN | | Yahoo end-exclusive vs inclusive contract |
 | M33 | Med | mech | OPEN | | Tiingo duplicate Close columns |
 | M34 | Med | mech | OPEN | | CoinGecko ignores window/interval |
