@@ -303,10 +303,12 @@ def run_pipeline(
     if not symbol_data:
         raise ValueError("No data available for any symbol. Check data providers and network connection.")
 
-    # Commission from cost config
-    commission = config.costs.commission_pct + (
-        config.costs.spread_bps / 10_000 / 2
-    ) + (config.costs.slippage_bps / 10_000)
+    # Commission from cost config (H29: single shared effective-cost helper — same formula the AI
+    # research executor now uses, so CLI and AI runs price transaction cost identically).
+    from src.backend.backtesting.costs.model import effective_commission_pct
+    commission = effective_commission_pct(
+        config.costs.commission_pct, config.costs.spread_bps, config.costs.slippage_bps
+    )
 
     # ------------------------------------------------------------------ #
     # 3. Run backtests: optimize or walk-forward for each combo

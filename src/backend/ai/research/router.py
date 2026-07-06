@@ -47,6 +47,9 @@ class StartRunRequest(BaseModel):
     # F1/F2/F6 — start-options exposed to the UI
     rigor: str = "standard"          # exploratory | standard | strict
     enable_oos: bool = True          # D9/H5: OOS on by default (a run with it off cannot be badged "strong")
+    commission_pct: float = 0.001    # H29/D8: realistic transaction cost (same model as the CLI) —
+    spread_bps: float = 5.0          # effective per-side = commission + half-spread + slippage
+    slippage_bps: float = 2.0
     seed: int = 42
     # W0 — agent mode + LLM provider (inert until W1; rule_based = no LLM, €0)
     agent_mode: str = "rule_based"   # rule_based | ai_assisted | full_ai
@@ -389,6 +392,9 @@ async def _run_and_track(rec: RunRecord, req: StartRunRequest) -> None:
             strategy_families=req.strategy_families or None,
             rigor=req.rigor,
             enable_oos=req.enable_oos,
+            commission_pct=req.commission_pct,
+            spread_bps=req.spread_bps,
+            slippage_bps=req.slippage_bps,
             seed=req.seed,
             agent_mode=req.agent_mode,
             provider=req.provider,

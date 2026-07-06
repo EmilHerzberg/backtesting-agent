@@ -8,6 +8,8 @@
 
 **Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **44 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50 · 2A: H3/H14/H15/H16/H17/H18 · 2B: H5 · 2C: H4/H8/H24/M19/M20/M21/M22/M23 · 3A: H21/H22/H23/M32/M33/M34/M35 · 3B: H27/M47/M53) + L17, L22. **✅ All 3 criticals fixed. Phases 1+2+3 MERGED to main. Phase 2+3 adversarially reviewed (see below).**
 
+**Phase 4 IN PROGRESS:** cluster 4A (unified cost model, H29/M55) DONE — see below. 4B (LLM degradation & identity honesty: H25/H26/H28/H31 + M37–M45) next.
+
 **Phase 2+3 review (2026-07-06, [PHASE2-3-REVIEW-2026-07-06.md](./PHASE2-3-REVIEW-2026-07-06.md)):** 10-dimension multi-agent audit → **20 confirmed, 0 critical, 0 high** (the P2/P3 stat/data core holds). Fixes applied (branch `quant-review/phase2-3-review-fixes`): M32 on the research path (`_default_fetch` end-inclusive); live `/candidates` PENDING → honest marker; H24 survivorship surfaced in robustness (candidate.weaknesses both modes); M21 `errored_gate` plumbed through the gatekeeper facade + loop; Šidák docstring corrected (online scheme ≈17% FWER at 20 peeks, NOT 5%); OOS report counts deduped per hash (H16); requested-OOS-that-can't-init now RAISES (no silent in-sample); H8 test's false "clears clean" claim removed; + M22/M23 live-wiring gating tests. H18's Šidák correction is **within-run only** (per-run in-memory peek count); cross-run hold-out mining remains a backlog item.
 
 **PROVIDER LAYER NOW WIRED (2026-07-06):** the research loop's `run.py:_default_fetch` routes through the marketdata PROVIDER layer (`YahooProvider` by default, `settings.data_provider` to switch) instead of raw `yf.Ticker().history()` — so M32 (end-inclusive) + the adjustment conventions are LIVE on the research path (the CLI already used `create_provider("yahoo")`). Storage concern addressed by a 3-layer design: (1) provider fetch = stateless (no DB growth); (2) an always-on **in-memory per-run cache** on `_SimpleDataAgent` collapses the ~100+ redundant same-(asset,window) fetches per run into one (speed, no persistence); (3) the **persistent DB cache is opt-in** (`run_research(use_price_cache=…)`, default OFF) — reserved for paid providers / intraday where it conserves API quota; yfinance-daily stays persistence-free so the server DB doesn't grow (daily is ~MB-scale anyway; the blow-up risk is intraday, i.e. exactly the paid-provider scenario). Still backlog: routing through `AggregatedDataProvider` for multi-provider priority (H22 keyed-provider live use), test-gating for loop-peek/M19-PathB/M35-endpoint, cache replace-window + non-atomic edge cases.
@@ -144,8 +146,8 @@
 ### Cluster 4A — Unified cost model
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| H29 | High | spec | SPEC | | AI executor drops spread/slippage — unify with CLI (D8). Same as M55. |
-| M55 | Med | mech | OPEN | | Duplicate of H29 (merge; treat as high) |
+| H29 | High | spec | DONE | `test_cost_model_4a.py` | D8: shared `effective_commission_pct()` (commission+half-spread+slippage) used by BOTH the CLI and the research executor; cost params on run_research/StartRunRequest (default ≈14.5 bps/side, not 10) |
+| M55 | Med | mech | DONE | `test_cost_model_4a.py` | closed with H29 (same root — executor now on the realistic cost model, exposed on the run request) |
 | L18 | Low | dec | BACKLOG | | Spread half/full docstring ambiguity |
 | L19 | Low | dec | BACKLOG | | costs/ package dead — wire or delete |
 | L20 | Low | mech | BACKLOG | | Per-side commission doubling undocumented |

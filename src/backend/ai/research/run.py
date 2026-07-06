@@ -139,6 +139,9 @@ async def run_research(
     enable_leakage_canary: bool = True,  # M22: run the leakage canary on survivors (re-runs on synthetics)
     use_price_cache: bool = False,       # persist fetched bars in the DB cache (paid/intraday quota);
                                          # OFF for the yfinance-daily default so the server DB doesn't grow
+    commission_pct: float = 0.001,       # H29/D8: same realistic cost model the CLI uses —
+    spread_bps: float = 5.0,             # effective per-side cost = commission + half-spread + slippage
+    slippage_bps: float = 2.0,           # (≈14.5 bps/side by default, not the old bare 10 bps)
     agent_mode: str = "rule_based",   # W0: rule_based | ai_assisted | full_ai
     provider: str | None = None,      # W0: LLM provider name (registry); None = auto/none
     model: str | None = None,         # W0: model id; None = provider default
@@ -258,7 +261,10 @@ async def run_research(
         )
     else:
         strategist = RuleBasedStrategist(seed=seed, window_start=train_ws, window_end=train_we)
-    executor = ResearchExecutor()
+    # H29/D8: charge the same realistic effective cost as the CLI (commission + half-spread + slippage),
+    # not a bare commission — otherwise AI-discovered strategies are graded ~30% cheaper than documented.
+    from src.backend.backtesting.costs.model import effective_commission_pct
+    executor = ResearchExecutor(commission=effective_commission_pct(commission_pct, spread_bps, slippage_bps))
     gatekeeper = ResearchGatekeeper(rigor=rigor, mode=mode)
     critic = AdversarialCritic(
         llm=(llm if agent_mode in ("ai_assisted", "full_ai") else None),
