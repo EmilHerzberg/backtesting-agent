@@ -126,6 +126,7 @@ async def persist_snapshot(rec: Any) -> None:
                 run.used_eur = float(st.budget.used_eur)
                 run.train_end = getattr(st, "train_end", "") or ""   # P2: select-on-train split boundary
                 run.provider_type = getattr(st, "provider_type", "") or ""   # P2: leakage-marker provenance
+                run.model_id = getattr(st, "model_id", "") or ""             # H31: per-model leakage badge
 
             # H27: advance the flush cursors in LOCALS; write them back to rec.* only AFTER the commit
             # succeeds, so a failed/rolled-back commit is retried next tick — never silently dropped
@@ -331,6 +332,7 @@ async def load_run_for_state(goal_id: str, user_id: int) -> dict[str, Any] | Non
             "window_start": run.window_start,
             "window_end": run.window_end,
             "provider_type": run.provider_type,              # P2: leakage marker
+            "model_id": run.model_id,                        # H31: per-model leakage badge
         }
 
 
@@ -470,6 +472,7 @@ async def load_runs_list(user_id: int, limit: int = 100) -> list[dict[str, Any]]
                 "started_at": _utc_iso(r.started_at),
                 "finished_at": _utc_iso(r.finished_at),
                 "provider_type": r.provider_type,   # P2: leakage marker
+                "model_id": r.model_id,             # H31: per-model leakage badge
             }
             for r in runs
         ]

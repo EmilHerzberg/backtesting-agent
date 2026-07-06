@@ -244,6 +244,9 @@ async def run_research(
     state.agent_mode = agent_mode  # effective mode (W0-2: honest about what actually ran)
     # P2: record the effective provider type for the leakage marker (F-11) — "" for rule_based/no-LLM.
     state.provider_type = getattr(getattr(llm, "provider", None), "provider_type", "") if llm is not None else ""
+    # H31: record the effective MODEL id too — the leakage badge is per-model (a provider can ship a
+    # validated model AND an unvalidated sibling), so provider granularity alone is over-optimistic.
+    state.model_id = getattr(llm, "model", "") if llm is not None else ""
     state.mode = mode
     state.window_start = eff_ws       # FULL window (display, decay, hold-out bound)
     state.window_end = eff_we

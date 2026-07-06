@@ -299,8 +299,13 @@ class AdversarialCritic:
         bh_return = benchmark.get("buy_hold_return", metrics.get("buy_hold_return", 0.0))
 
         # 1. OVERFITTING: suspiciously precise params + high Sharpe + low trades
-        if n_trades < 30:
-            weaknesses.append(f"Low trade count ({n_trades}) — insufficient for statistical significance")
+        # H26: the smart-activity gate ALREADY vetted trade count against the CALIBRATED floor (5–8,
+        # observed median ~12) with a per-trade t-stat before the critic runs. The old hardcoded 30 →
+        # "insufficient" here re-rejected most gate-passing candidates (the word "insufficient" escalates
+        # to reject below), silently overriding the calibration. Keep only a NON-critical caveat for a
+        # genuinely thin sample; the reject decision on trade count belongs to the gate, not the critic.
+        if n_trades < 20:
+            weaknesses.append(f"Modest trade count ({n_trades}) — treat per-trade statistics with caution")
         if sharpe > 3.0:
             weaknesses.append(f"Suspiciously high Sharpe ({sharpe:.2f}) — likely overfit")
 

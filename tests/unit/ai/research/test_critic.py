@@ -12,13 +12,16 @@ def critic():
 
 class TestHeuristicCritic:
     @pytest.mark.asyncio
-    async def test_rejects_low_trade_count(self, critic):
+    @pytest.mark.finding("H26")
+    async def test_low_trade_count_is_a_caveat_not_a_reject(self, critic):
+        # H26: the smart-activity gate already vetted trade count (calibrated floor) before the critic;
+        # a thin sample is now a NON-critical caveat, not a hardcoded-30 reject that overrode calibration.
         result = await critic.review(
             spec={"template_id": "sma"},
             metrics={"sharpe_annual": 1.0, "n_trades": 10, "total_return": 0.2, "max_drawdown": -0.1},
             gate_report={"passed": True},
         )
-        assert result["recommendation"] == "reject"
+        assert result["recommendation"] != "reject"
         assert any("trade count" in w.lower() for w in result["weaknesses"])
 
     @pytest.mark.asyncio

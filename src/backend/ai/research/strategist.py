@@ -288,6 +288,8 @@ class LLMStrategist:
         self._llm = llm
         self._ledger = ledger
         self._fb = fallback
+        self.llm_calls = 0              # H25: LLM proposals attempted (billed)
+        self.fallback_after_bill = 0    # H25: of those, how many were unparseable → rule-based fallback
         # P1: effective window (stamped onto the spec; the LLM still chooses template+params ONLY, C-6).
         self.window_start = window_start
         self.window_end = window_end
@@ -327,7 +329,13 @@ class LLMStrategist:
                     ),
                 ],
                 temperature=0.4,
-                max_tokens=700,
+                # H25: reasoning models spend tokens on chain-of-thought BEFORE the JSON verdict; a
+                # 700-token cap truncated them → extract_json_object returned None → silent fallback to
+                # rule-based AFTER billing. The two production-recommended mechanism-only models
+                # (deepseek-reasoner, byteplus seed) are reasoners, so full_ai was ~100% heuristic while
+                # billing. Give reasoners the Critic's headroom (a higher cap is free for non-reasoners —
+                # billing is on tokens actually generated, and they stop when the JSON is done).
+                max_tokens=4000 if self._llm.supports_reasoning else 700,
                 json_mode=self._llm.supports_json_mode,
             )
             resp = await self._llm.provider.chat_completion(req)
@@ -335,7 +343,14 @@ class LLMStrategist:
                 self._ledger.record(resp.usage, self._llm)   # billed even if _build discards (S-4)
             built = self._build(resp.content, asset, templates)
             if built is None:
+                # H25: we PAID for this call and could not use it — count + log distinctly so a silent
+                # LLM→heuristic degradation is visible (surfaced as the llm-vs-fallback ratio).
+                self.llm_calls += 1
+                self.fallback_after_bill += 1
+                logger.warning("Strategist LLM billed but unparseable — fell back to rule-based "
+                               "(fallbacks %d/%d)", self.fallback_after_bill, self.llm_calls)
                 return await self._fb.propose(asset, strategy_families, failure_context, registry_summary)
+            self.llm_calls += 1
             return built
         except Exception as exc:  # noqa: BLE001 — any LLM failure -> rule-based, never stall
             logger.warning("Strategist LLM failed (%s) — rule-based", exc)
