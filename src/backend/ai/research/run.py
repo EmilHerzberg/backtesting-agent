@@ -139,6 +139,9 @@ async def run_research(
     enable_leakage_canary: bool = True,  # M22: run the leakage canary on survivors (re-runs on synthetics)
     use_price_cache: bool = False,       # persist fetched bars in the DB cache (paid/intraday quota);
                                          # OFF for the yfinance-daily default so the server DB doesn't grow
+    commission_pct: float = 0.001,       # H29/D8: same realistic cost model the CLI uses —
+    spread_bps: float = 5.0,             # effective per-side cost = commission + half-spread + slippage
+    slippage_bps: float = 2.0,           # (≈14.5 bps/side by default, not the old bare 10 bps)
     agent_mode: str = "rule_based",   # W0: rule_based | ai_assisted | full_ai
     provider: str | None = None,      # W0: LLM provider name (registry); None = auto/none
     model: str | None = None,         # W0: model id; None = provider default
@@ -241,6 +244,9 @@ async def run_research(
     state.agent_mode = agent_mode  # effective mode (W0-2: honest about what actually ran)
     # P2: record the effective provider type for the leakage marker (F-11) — "" for rule_based/no-LLM.
     state.provider_type = getattr(getattr(llm, "provider", None), "provider_type", "") if llm is not None else ""
+    # H31: record the effective MODEL id too — the leakage badge is per-model (a provider can ship a
+    # validated model AND an unvalidated sibling), so provider granularity alone is over-optimistic.
+    state.model_id = getattr(llm, "model", "") if llm is not None else ""
     state.mode = mode
     state.window_start = eff_ws       # FULL window (display, decay, hold-out bound)
     state.window_end = eff_we
@@ -258,7 +264,10 @@ async def run_research(
         )
     else:
         strategist = RuleBasedStrategist(seed=seed, window_start=train_ws, window_end=train_we)
-    executor = ResearchExecutor()
+    # H29/D8: charge the same realistic effective cost as the CLI (commission + half-spread + slippage),
+    # not a bare commission — otherwise AI-discovered strategies are graded ~30% cheaper than documented.
+    from src.backend.backtesting.costs.model import effective_commission_pct
+    executor = ResearchExecutor(commission=effective_commission_pct(commission_pct, spread_bps, slippage_bps))
     gatekeeper = ResearchGatekeeper(rigor=rigor, mode=mode)
     critic = AdversarialCritic(
         llm=(llm if agent_mode in ("ai_assisted", "full_ai") else None),

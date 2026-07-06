@@ -27,7 +27,15 @@ from pydantic import BaseModel, model_validator
 
 from src.backend.auth.dependencies import get_current_user_id
 from src.backend.ai.research import persistence
-from src.backend.ai.leakage import provider_leakage
+from src.backend.ai.leakage import model_leakage, provider_leakage
+
+
+def _run_leakage(provider_type: str, model_id: str = "") -> str:
+    """H31: a run's leakage badge = the classification of the MODEL that actually drove selection
+    (per-model), falling back to the provider summary only when the model is unknown (rule_based /
+    legacy rows). Provider granularity alone was over-optimistic — a provider that ships one validated
+    model badged every run on it clean, even a run that used an unvalidated sibling model."""
+    return model_leakage(model_id) if model_id else provider_leakage(provider_type)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +55,9 @@ class StartRunRequest(BaseModel):
     # F1/F2/F6 — start-options exposed to the UI
     rigor: str = "standard"          # exploratory | standard | strict
     enable_oos: bool = True          # D9/H5: OOS on by default (a run with it off cannot be badged "strong")
+    commission_pct: float = 0.001    # H29/D8: realistic transaction cost (same model as the CLI) —
+    spread_bps: float = 5.0          # effective per-side = commission + half-spread + slippage
+    slippage_bps: float = 2.0
     seed: int = 42
     # W0 — agent mode + LLM provider (inert until W1; rule_based = no LLM, €0)
     agent_mode: str = "rule_based"   # rule_based | ai_assisted | full_ai
@@ -114,7 +125,8 @@ class ResearchStateResponse(BaseModel):
     window_start: str = ""           # P1: effective backtest window
     window_end: str = ""
     provider_type: str = ""          # P2: effective LLM provider type
-    leakage: str = "unvalidated"     # P2 (F-11): the run's provider leakage state
+    model_id: str = ""               # H31: the model that actually ran
+    leakage: str = "unvalidated"     # P2 (F-11)/H31: the run's per-MODEL leakage state
     max_seconds: int = 0
     started_at: str | None = None
     current_lineage: str = ""
@@ -230,7 +242,8 @@ class RunListItem(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     provider_type: str = ""          # P2
-    leakage: str = "unvalidated"     # P2 (F-11)
+    model_id: str = ""               # H31: the model that actually ran
+    leakage: str = "unvalidated"     # P2 (F-11)/H31: per-MODEL leakage state
 
 
 class GateResultResponse(BaseModel):
@@ -389,6 +402,9 @@ async def _run_and_track(rec: RunRecord, req: StartRunRequest) -> None:
             strategy_families=req.strategy_families or None,
             rigor=req.rigor,
             enable_oos=req.enable_oos,
+            commission_pct=req.commission_pct,
+            spread_bps=req.spread_bps,
+            slippage_bps=req.slippage_bps,
             seed=req.seed,
             agent_mode=req.agent_mode,
             provider=req.provider,
@@ -513,7 +529,7 @@ async def list_runs(
 ) -> list[RunListItem]:
     """List the caller's research runs, newest first (C-6 runs history)."""
     rows = await persistence.load_runs_list(user_id)
-    return [RunListItem(**r, leakage=provider_leakage(r.get("provider_type", ""))) for r in rows]
+    return [RunListItem(**r, leakage=_run_leakage(r.get("provider_type", ""), r.get("model_id", ""))) for r in rows]
 
 
 @router.get("/runs/preview", response_model=ScopePreviewResponse)
@@ -576,7 +592,8 @@ async def get_run_state(
             window_start=getattr(state, "window_start", ""),
             window_end=getattr(state, "window_end", ""),
             provider_type=getattr(state, "provider_type", ""),        # P2
-            leakage=provider_leakage(getattr(state, "provider_type", "")),
+            model_id=getattr(state, "model_id", ""),                  # H31
+            leakage=_run_leakage(getattr(state, "provider_type", ""), getattr(state, "model_id", "")),
             max_seconds=state.budget.max_seconds,
             started_at=rec.started_at.isoformat() if rec.started_at else None,
             current_lineage=state.current_lineage_id,
@@ -614,7 +631,8 @@ async def get_run_state(
         window_start=row.get("window_start", ""),
         window_end=row.get("window_end", ""),
         provider_type=row.get("provider_type", ""),        # P2
-        leakage=provider_leakage(row.get("provider_type", "")),
+        model_id=row.get("model_id", ""),                  # H31
+        leakage=_run_leakage(row.get("provider_type", ""), row.get("model_id", "")),
     )
 
 

@@ -21,8 +21,11 @@ _NUMERIC_PATTERNS = [
     re.compile(r"\d+\.\d+x"),              # multipliers like 2.5x
 ]
 
-# Template variable pattern to exclude: {{var_name}}
-_TEMPLATE_VAR = re.compile(r"\{\{[^}]+\}\}")
+# Template variable pattern to exclude: {{binding_name}}. H28: only a BINDING IDENTIFIER is carved out
+# (starts with a letter/underscore, then word chars/dots) — NOT arbitrary {{...}} content. The old
+# `\{\{[^}]+\}\}` stripped any double-braced text before scanning, so an LLM emitting `{{1.2}}` (or
+# `{{Sharpe was 1.2}}`) shipped digits straight past the digit-free-report guarantee.
+_TEMPLATE_VAR = re.compile(r"\{\{[a-zA-Z_][a-zA-Z0-9_.]*\}\}")
 
 
 class NumericClaimError(Exception):

@@ -45,6 +45,7 @@ class LLMHandle:
     output_price_per_m: float      # EUR per 1M completion tokens
     supports_tools: bool = False
     supports_json_mode: bool = False
+    supports_reasoning: bool = False   # H25: reasoning models need a larger max_tokens (reason-before-JSON)
 
 
 def _auto_pick() -> IAIProvider | None:
@@ -86,6 +87,7 @@ def resolve_agent_llm(
         output_price_per_m=float(mi.output_price_per_m or 0),
         supports_tools=bool(mi.supports_tools),
         supports_json_mode=bool(getattr(mi, "supports_json_mode", False)),
+        supports_reasoning=bool(getattr(mi, "supports_reasoning", False)),
     )
 
 

@@ -28,6 +28,17 @@ class TestNumericTokenScan:
         found = scan_for_numeric_claims("The Sharpe was {{metrics.sharpe}}")
         assert len(found) == 0
 
+    @pytest.mark.finding("H28")
+    def test_double_braced_digits_are_not_carved_out(self):
+        # H28: only a binding IDENTIFIER is carved out — {{1.2}} is NOT, so the digits are caught and
+        # can't ship past the digit-free-report guarantee.
+        assert "1.2" in scan_for_numeric_claims("The Sharpe was {{1.2}}")
+        with pytest.raises(NumericClaimError):
+            assert_no_numeric_claims("Sharpe was {{1.2}}")
+        assert scan_for_numeric_claims("Sharpe was {{Sharpe was 1.2}}")  # non-identifier braces scanned
+        # a real binding is still allowed through
+        assert scan_for_numeric_claims("{{metrics.sharpe}}") == []
+
     def test_clean_text_passes(self):
         found = scan_for_numeric_claims(
             "The strategy shows strong momentum characteristics with "

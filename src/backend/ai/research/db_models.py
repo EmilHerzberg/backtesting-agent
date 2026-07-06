@@ -62,6 +62,7 @@ class ResearchRunDB(Base):
     window_end: Mapped[str] = mapped_column(String(20), default="")
     train_end: Mapped[str] = mapped_column(String(20), default="")  # P2: regime select-on-train split boundary
     provider_type: Mapped[str] = mapped_column(String(30), default="")  # P2: effective LLM provider (leakage marker)
+    model_id: Mapped[str] = mapped_column(String(60), default="")        # H31: effective model (per-model leakage)
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

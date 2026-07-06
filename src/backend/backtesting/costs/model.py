@@ -12,6 +12,19 @@ from src.backend.backtesting.costs.slippage import SlippageConfig
 from src.backend.backtesting.costs.spread import SpreadConfig
 
 
+def effective_commission_pct(
+    commission_pct: float = 0.001, spread_bps: float = 5.0, slippage_bps: float = 2.0
+) -> float:
+    """H29/D8 — the SINGLE effective per-side cost fraction shared by the CLI and the AI research
+    executor: percentage commission + HALF the bid-ask spread (one side crossed per fill) + slippage.
+
+    Previously the CLI charged ~14.5 bps/side (commission 0.1% + 2.5 bps half-spread + 2 bps slippage)
+    while ResearchExecutor charged a bare 0.1% (10 bps), so AI-discovered strategies were evaluated at
+    ~30% lower transaction cost than the platform's own documented model and every cost-sensitive gate
+    stressed the thinner baseline. Both paths now derive their commission from this one helper."""
+    return float(commission_pct) + float(spread_bps) / 10_000 / 2 + float(slippage_bps) / 10_000
+
+
 @dataclass
 class CostConfig:
     """Combined cost model aggregating commission, spread, and slippage.

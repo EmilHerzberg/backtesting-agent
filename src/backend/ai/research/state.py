@@ -225,6 +225,7 @@ class ResearchState:
     stop_reason: str = ""                             # Director: final reason at loop exit (for the report, D-4)
     agent_mode: str = "rule_based"                    # W0: effective mode the run executed
     provider_type: str = ""                           # P2: effective LLM provider type (for the leakage marker)
+    model_id: str = ""                                # H31: the MODEL that actually ran (leakage is per-model)
     mode: str = "robustness"                          # P1: robustness | regime
     window_start: str = ""                            # P1: effective backtest window (regime = user's; FULL window)
     window_end: str = ""
