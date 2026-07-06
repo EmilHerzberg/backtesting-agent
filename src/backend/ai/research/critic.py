@@ -75,7 +75,8 @@ Output a JSON object with:
 }
 
 Rules:
-- "high" confidence requires: walk-forward validated, 100+ trades, benchmark beats, no red flags
+- "high" confidence requires: 100+ trades, benchmark beats, no red flags (confidence is ADVISORY —
+  out-of-sample validation runs AFTER this critique, so do not claim it here; M41)
 - "reject" if: any critical weakness found (overfitting, leakage, pure beta with no alpha)
 - "accept" if: no critical weaknesses, reasonable sample size, beats benchmarks
 - "investigate" if: mixed signals, some concerns but not dealbreakers
@@ -197,6 +198,7 @@ class AdversarialCritic:
             if verdict is None:
                 logger.warning("Critic: unparseable LLM verdict — using heuristic")
                 return self._heuristic_review(spec, metrics, gate_report)
+            verdict["source"] = "llm"   # M39: a genuine LLM critique (vs the heuristic fallback)
             return verdict
         except Exception as exc:  # noqa: BLE001 — any LLM failure must fall back, never accept
             logger.warning("Critic LLM failed (%s) — using heuristic", exc)
@@ -325,11 +327,17 @@ class AdversarialCritic:
                         f"Negative Sharpe ({min(neg_regimes):.2f}) in at least one regime period"
                     )
 
-        # 3. PURE BETA: just buying dips in a bull market?
-        if bh_return > 0 and total_return > 0:
-            excess = total_return - bh_return
-            if excess < 0:
-                weaknesses.append(f"Strategy underperforms buy-and-hold ({total_return:.1%} vs {bh_return:.1%})")
+        # 3. BENCHMARK + PROFITABILITY (M40): the old check was gated on BOTH bh_return>0 AND
+        # total_return>0, so a losing strategy or a missing benchmark skipped it entirely and could
+        # still be ACCEPTED with "high" confidence. Now: a non-positive return is a critical failure;
+        # a missing benchmark blocks accept; underperformance is flagged regardless of sign.
+        has_benchmark = bool(benchmark) or ("buy_hold_return" in metrics)
+        if total_return <= 0:
+            weaknesses.append(f"Losing strategy — non-positive return ({total_return:.1%}) is a critical failure")
+        if not has_benchmark:
+            weaknesses.append("No benchmark data — cannot verify the strategy beats buy-and-hold")
+        elif (total_return - bh_return) < 0:
+            weaknesses.append(f"Strategy underperforms buy-and-hold ({total_return:.1%} vs {bh_return:.1%})")
 
         # 4. COST FRAGILITY (check if near breakeven)
         if 0 < total_return < 0.02:
@@ -339,14 +347,16 @@ class AdversarialCritic:
         if max_dd < -0.30:
             weaknesses.append(f"Severe max drawdown ({max_dd:.1%})")
 
-        # Determine recommendation
-        critical = any("insufficient" in w.lower() or "overfit" in w.lower() for w in weaknesses)
+        # Determine recommendation. M40: a losing strategy ("critical failure") is now a reject.
+        critical = any("insufficient" in w.lower() or "overfit" in w.lower() or "critical failure" in w.lower()
+                       for w in weaknesses)
         if critical:
             return {
                 "weaknesses": weaknesses,
                 "confidence": "medium",
                 "recommendation": "reject",
                 "reasoning": f"Critical weakness found: {weaknesses[0]}",
+                "source": "heuristic",   # M39: this critique came from the rule-based fallback, not the LLM
             }
         elif weaknesses:
             return {
@@ -354,6 +364,7 @@ class AdversarialCritic:
                 "confidence": "low",
                 "recommendation": "investigate",
                 "reasoning": f"{len(weaknesses)} concern(s) found but none critical",
+                "source": "heuristic",   # M39
             }
         else:
             confidence = "high" if n_trades >= 100 and sharpe > 0.5 else "medium"
@@ -362,4 +373,5 @@ class AdversarialCritic:
                 "confidence": confidence,
                 "recommendation": "accept",
                 "reasoning": "No critical weaknesses found",
+                "source": "heuristic",   # M39
             }

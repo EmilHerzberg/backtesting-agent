@@ -19,20 +19,32 @@ logger = logging.getLogger(__name__)
 
 
 def extract_json_object(content: str | None) -> dict | None:
-    """Extract the first {...} JSON object from an LLM reply (markdown-tolerant).
+    """Extract the FIRST balanced {...} JSON object from an LLM reply (markdown/code-fence tolerant).
 
-    Shared by the agent LLM paths (W1 Critic, W2 Strategist). Returns None on any failure.
+    M42: the old "first { to last }" slice discarded billed LLM output whenever the reply had prose
+    containing a stray '}', two JSON objects, or a raw newline inside a string. Now we strip code
+    fences and try to ``raw_decode`` a JSON object starting at each '{' (``strict=False`` tolerates
+    control chars in strings); the first that parses to a dict wins. None only when none is present.
     """
     if not content:
         return None
-    start, end = content.find("{"), content.rfind("}")
-    if start == -1 or end < start:
-        return None
-    try:
-        obj = json.loads(content[start:end + 1])
-    except Exception:  # noqa: BLE001
-        return None
-    return obj if isinstance(obj, dict) else None
+    text = content.strip()
+    if "```" in text:                                  # unwrap ```json ... ``` / ``` ... ```
+        import re
+        m = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+        if m:
+            text = m.group(1).strip()
+    decoder = json.JSONDecoder(strict=False)
+    i = text.find("{")
+    while i != -1:
+        try:
+            obj, _ = decoder.raw_decode(text, i)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:  # noqa: BLE001 — not a valid object at this '{', try the next
+            pass
+        i = text.find("{", i + 1)
+    return None
 
 
 @dataclass
@@ -41,8 +53,8 @@ class LLMHandle:
 
     provider: IAIProvider
     model: str
-    input_price_per_m: float       # EUR per 1M prompt tokens (0.0 if unknown)
-    output_price_per_m: float      # EUR per 1M completion tokens
+    input_price_per_m: float | None    # EUR per 1M prompt tokens (None = unknown, 0.0 = genuinely free)
+    output_price_per_m: float | None   # EUR per 1M completion tokens (None = unknown)
     supports_tools: bool = False
     supports_json_mode: bool = False
     supports_reasoning: bool = False   # H25: reasoning models need a larger max_tokens (reason-before-JSON)
@@ -79,12 +91,20 @@ def resolve_agent_llm(
     models = inst.list_models()
     if not models:
         return None
-    mi = next((m for m in models if m.model_id == model), None) or models[0]
+    mi = next((m for m in models if m.model_id == model), None)
+    if mi is None:
+        if model:   # M43: don't silently swap — a mismatched id has different pricing AND leakage class
+            logger.warning("Requested model %r not found for provider %s — substituting %s "
+                           "(different pricing/leakage class)", model,
+                           getattr(inst, "provider_type", "?"), models[0].model_id)
+        mi = models[0]
     return LLMHandle(
         provider=inst,
         model=mi.model_id,
-        input_price_per_m=float(mi.input_price_per_m or 0),
-        output_price_per_m=float(mi.output_price_per_m or 0),
+        # M44: preserve None (unknown pricing) distinctly from 0.0 (genuinely free) — do NOT fabricate 0,
+        # which read €0.0000 in the HUD and let the € budget cap silently never bind for unpriced models.
+        input_price_per_m=(float(mi.input_price_per_m) if mi.input_price_per_m is not None else None),
+        output_price_per_m=(float(mi.output_price_per_m) if mi.output_price_per_m is not None else None),
         supports_tools=bool(mi.supports_tools),
         supports_json_mode=bool(getattr(mi, "supports_json_mode", False)),
         supports_reasoning=bool(getattr(mi, "supports_reasoning", False)),
@@ -104,6 +124,7 @@ class TokenLedger:
     completion_tokens: int = 0
     n_calls: int = 0
     cost_eur: float = 0.0
+    cost_known: bool = True   # M44: False once any call used a model with unknown pricing
 
     def record(self, usage: TokenUsage | None, llm: LLMHandle) -> None:
         self.n_calls += 1
@@ -111,6 +132,11 @@ class TokenLedger:
             return
         self.prompt_tokens += usage.prompt_tokens
         self.completion_tokens += usage.completion_tokens
+        if llm.input_price_per_m is None or llm.output_price_per_m is None:
+            # M44: pricing unknown — record the tokens but do NOT fabricate €0. cost_eur/used_eur stay
+            # honest (the HUD should show "unknown (N tokens)"); the € cap genuinely cannot bind here.
+            self.cost_known = False
+            return
         cost = (
             llm.input_price_per_m * usage.prompt_tokens
             + llm.output_price_per_m * usage.completion_tokens

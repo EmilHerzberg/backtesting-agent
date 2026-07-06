@@ -73,6 +73,39 @@ def test_critic_still_rejects_overfit_sharpe():
     assert r["recommendation"] == "reject"     # Sharpe>3 "overfit" is still a critical reject
 
 
+@pytest.mark.finding("M40")
+def test_critic_rejects_losing_strategy():
+    r = AdversarialCritic()._heuristic_review({}, _metrics(total_return=-0.05, n_trades=50, sharpe_annual=0.8), {})
+    assert r["recommendation"] == "reject"     # a non-positive return is a critical failure
+
+
+@pytest.mark.finding("M40")
+def test_critic_will_not_accept_without_benchmark():
+    # strong-looking but NO benchmark data (no benchmark dict, no buy_hold_return) → must not accept.
+    r = AdversarialCritic()._heuristic_review(
+        {}, {"sharpe_annual": 1.5, "n_trades": 150, "total_return": 0.30, "max_drawdown": -0.10}, {})
+    assert r["recommendation"] != "accept"
+    assert any("benchmark" in w.lower() for w in r["weaknesses"])
+
+
+@pytest.mark.finding("M39")
+def test_heuristic_critique_is_stamped_source():
+    r = AdversarialCritic()._heuristic_review({}, _metrics(), {})
+    assert r["source"] == "heuristic"          # degradation is visible in the persisted critique
+
+
+@pytest.mark.finding("M37")
+def test_strategist_feedback_carries_the_critic_note():
+    strat = LLMStrategist(
+        LLMHandle(provider=None, model="m", input_price_per_m=0.0, output_price_per_m=0.0),
+        None, RuleBasedStrategist(),
+    )
+    fc = SimpleNamespace(template_id="sma", params={}, failed_gate=None,
+                         failure_reason="critic_rejection", critic_notes="Pure beta: just tracked the market")
+    rendered = strat._render("AAPL", [], [fc], {})
+    assert "Pure beta" in rendered             # the critic's substance reaches the strategist prompt
+
+
 @pytest.mark.finding("H31")
 def test_run_leakage_badge_is_per_model_not_provider(monkeypatch):
     # The run badge must reflect the MODEL that ran, not the provider summary — a provider that ships

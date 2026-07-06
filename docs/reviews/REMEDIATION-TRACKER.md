@@ -6,9 +6,9 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **44 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50 · 2A: H3/H14/H15/H16/H17/H18 · 2B: H5 · 2C: H4/H8/H24/M19/M20/M21/M22/M23 · 3A: H21/H22/H23/M32/M33/M34/M35 · 3B: H27/M47/M53) + L17, L22. **✅ All 3 criticals fixed. Phases 1+2+3 MERGED to main. Phase 2+3 adversarially reviewed (see below).**
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **59 / 95** (1A-1E + 2A-2C + 3A-3B as before · 4A: H29/M55 · 4B: H25/H26/H28/H31/M37/M38/M39/M40/M41/M42/M43/M44/M45). **✅ All 3 criticals fixed. Phases 1-4 done; Phases 1-3 + review + provider-wiring MERGED to main (Phase 4 PR pending). Phase 2+3 adversarially reviewed.**
 
-**Phase 4 IN PROGRESS:** 4A (unified cost model, H29/M55) DONE; 4B HIGHS (H25/H26/H28/H31) DONE. 4B mediums (M37–M45: critic-reasoning feedback, LLM provenance, degradation visibility, pricing/€0 cap) remain. ⚠ H31 needs a one-line DB migration on the running server (add `research_runs.model_id`).
+**Phase 4 COMPLETE:** 4A (unified cost model, H29/M55) + 4B (H25/H26/H28/H31 + M37–M45 mediums) all DONE. ⚠ H31 needs a one-line DB migration on the running server (`ALTER TABLE research_runs ADD COLUMN model_id VARCHAR(60) DEFAULT ''`). NEXT = Phase 5 (dead-code hygiene).
 
 **Phase 2+3 review (2026-07-06, [PHASE2-3-REVIEW-2026-07-06.md](./PHASE2-3-REVIEW-2026-07-06.md)):** 10-dimension multi-agent audit → **20 confirmed, 0 critical, 0 high** (the P2/P3 stat/data core holds). Fixes applied (branch `quant-review/phase2-3-review-fixes`): M32 on the research path (`_default_fetch` end-inclusive); live `/candidates` PENDING → honest marker; H24 survivorship surfaced in robustness (candidate.weaknesses both modes); M21 `errored_gate` plumbed through the gatekeeper facade + loop; Šidák docstring corrected (online scheme ≈17% FWER at 20 peeks, NOT 5%); OOS report counts deduped per hash (H16); requested-OOS-that-can't-init now RAISES (no silent in-sample); H8 test's false "clears clean" claim removed; + M22/M23 live-wiring gating tests. H18's Šidák correction is **within-run only** (per-run in-memory peek count); cross-run hold-out mining remains a backlog item.
 
@@ -160,15 +160,15 @@
 | H26 | High | mech | DONE | `test_llm_honesty_4b.py`, `test_critic.py` | heuristic critic no longer CRITICAL-rejects on trade count (the gate already vetted it) — thin sample is a non-critical caveat |
 | H28 | High | mech | DONE | `test_reporter.py` | scanner carve-out restricted to binding identifiers `\{\{[A-Za-z_][\w.]*\}\}` — `{{1.2}}` no longer ships digits past the digit-free guarantee |
 | H31 | High | mech | DONE | `test_llm_honesty_4b.py` | per-MODEL leakage badge: `state.model_id` set+persisted, `_run_leakage(provider,model)` uses `model_leakage()` (provider fallback only when unknown). ⚠ NEEDS DB MIGRATION on existing server: `ALTER TABLE research_runs ADD COLUMN model_id VARCHAR(60) DEFAULT ''` (fresh DBs get it via create_all) |
-| M37 | Med | mech | OPEN | | Critic reasoning dropped from failure feedback |
-| M38 | Med | mech | OPEN | | LLM proposals clamped/repaired with no provenance |
-| M39 | Med | mech | OPEN | | Silent LLM→heuristic degradation invisible in results |
-| M40 | Med | mech | OPEN | | Heuristic critic accepts "high" without benchmark |
-| M41 | Med | mech | OPEN | | critic_confidence decorative |
-| M42 | Med | mech | OPEN | | extract_json_object brittle widest-brace slice |
-| M43 | Med | mech | OPEN | | resolve_agent_llm silently swaps model[0] |
-| M44 | Med | mech | OPEN | | Unknown pricing metered €0 → cap never binds |
-| M45 | Med | mech | OPEN | | Decimal('0') truthiness → free model shown as unknown |
+| M37 | Med | mech | DONE | `test_llm_honesty_4b.py` | strategist `_render` includes a bounded `critic_note` excerpt so critic kills carry substance |
+| M38 | Med | mech | DONE | (code) | `_build` records `repaired[]` provenance on the spec; falls back when >half the params were system-invented |
+| M39 | Med | mech | DONE | `test_llm_honesty_4b.py` | critiques stamped `source=llm|heuristic` (+ strategist `llm_calls`/`fallback_after_bill` from H25) so degradation is visible |
+| M40 | Med | mech | DONE | `test_llm_honesty_4b.py` | heuristic critic: non-positive return = critical reject; missing benchmark blocks accept; underperformance checked regardless of sign |
+| M41 | Med | mech | DONE | (prompt) | dropped the unsatisfiable "walk-forward validated" high-confidence clause; confidence documented ADVISORY |
+| M42 | Med | mech | DONE | `test_llm_infra_4b.py` | `extract_json_object` raw_decodes from each `{` (strict=False, fence-strip) — recovers billed output the slice discarded |
+| M43 | Med | mech | DONE | (code) | `resolve_agent_llm` logs the model substitution (mismatched id has different pricing/leakage); effective model recorded |
+| M44 | Med | mech | DONE | `test_llm_infra_4b.py` | pricing carried as `float\|None`; ledger `cost_known=False` + no fabricated €0 for unpriced models |
+| M45 | Med | mech | DONE | (code) | `is not None` pricing check so `Decimal("0")` free models serve 0 (not null/unknown) |
 | M56 | Med | mech | OPEN | | provider_leakage optimistic precedence (compounds H31) |
 | M60 | Med | mech | OPEN | | Regime labels from strategy equity, not market. Found by 5. |
 

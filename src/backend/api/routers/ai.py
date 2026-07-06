@@ -205,8 +205,11 @@ async def list_models(
             provider=m.provider,
             description=m.description,
             context_window=m.context_window,
-            input_price=float(m.input_price_per_m) if m.input_price_per_m else None,
-            output_price=float(m.output_price_per_m) if m.output_price_per_m else None,
+            # M45: Decimal("0") is falsy, so `if m.input_price_per_m` mapped a genuinely FREE model
+            # (priced 0/0) to null → "free" was served as "unknown" and the free-model UI/auto-pick path
+            # was unreachable. Distinguish None (unknown) from 0 (free) explicitly.
+            input_price=float(m.input_price_per_m) if m.input_price_per_m is not None else None,
+            output_price=float(m.output_price_per_m) if m.output_price_per_m is not None else None,
             supports_streaming=m.supports_streaming,
             supports_tools=m.supports_tools,
             supports_vision=m.supports_vision,
