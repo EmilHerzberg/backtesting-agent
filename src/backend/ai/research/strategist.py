@@ -364,7 +364,11 @@ class LLMStrategist:
         ]
         recent = [
             {"template_id": fc.template_id, "params": fc.params,
-             "killed_by": fc.failed_gate or fc.failure_reason}
+             "killed_by": fc.failed_gate or fc.failure_reason,
+             # M37: a critic kill sets killed_by="critic_rejection" with the substance in critic_notes;
+             # pass a bounded excerpt so the strategist can actually follow "change the MECHANISM if they
+             # merely tracked the market" instead of seeing only the opaque literal.
+             "critic_note": (getattr(fc, "critic_notes", "") or "")[:200]}
             for fc in failure_context[-5:]
         ]
         payload = {
@@ -393,16 +397,29 @@ class LLMStrategist:
         if not isinstance(raw, dict):     # malformed params -> keep the template, midpoint-fill
             raw = {}
         params: dict[str, Any] = {}
+        repaired: list[str] = []                          # M38: provenance of system-invented values
         for name, ps in space.items():                   # exactly the template's param set
             lo, hi = ps["low"], ps["high"]
             v = raw.get(name)
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 val = min(max(v, lo), hi)                 # clamp into bounds (Q3)
+                if val != v:
+                    repaired.append(f"{name}: clamped {v}->{val}")
             else:
                 val = (lo + hi) / 2                       # midpoint fill (S-6)
+                repaired.append(f"{name}: midpoint-filled (missing/non-numeric)")
             params[name] = int(round(val)) if ps.get("type") == "int" else float(val)
 
+        # M38: if the system invented MORE THAN HALF the params, the LLM's stored rationale can't honestly
+        # describe the executed spec — fall back to rule-based rather than run invented params under the
+        # LLM narrative (worst case: a string `params` → every value a midpoint).
+        if len(repaired) > max(1, len(space) // 2):
+            return None
+
+        _pre_repair = dict(params)
         params = _repair_params(template_id, params)
+        if params != _pre_repair:
+            repaired.append("constraint repair (e.g. fast<slow)")
         strategy_hash = _compute_strategy_hash(template_id, params, asset)
         if strategy_hash in self._fb._tried_hashes:       # dedup vs shared set (F-2)
             return None
@@ -424,6 +441,7 @@ class LLMStrategist:
             "strategy_hash": strategy_hash,
             "template_id": template_id,
             "params": params,
+            "repaired": repaired,   # M38: provenance — which values the system clamped/filled/repaired
             "security_id": asset,
             "bar_size": BAR_SIZE,
             "strategy_family": family,
