@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -201,7 +201,10 @@ class YahooProvider(DataProvider):
             if start is not None:
                 kwargs["start"] = start.strftime("%Y-%m-%d")
             if end is not None:
-                kwargs["end"] = end.strftime("%Y-%m-%d")
+                # M32: yfinance history(end=...) is EXCLUSIVE, but the DataProvider contract (and every
+                # other provider / the frozen snapshot) treats end as INCLUSIVE. Pass end+1 day so the
+                # requested last bar is returned — otherwise live and deterministic runs disagree by one bar.
+                kwargs["end"] = (end + timedelta(days=1)).strftime("%Y-%m-%d")
             if start is None and end is None:
                 kwargs["period"] = "max" if interval == BarInterval.ONE_DAY else "60d"
 
@@ -216,6 +219,29 @@ class YahooProvider(DataProvider):
             return pd.DataFrame(columns=OHLCV_COLUMNS)
 
         return _normalize_ohlcv(df)
+
+
+def _av_adjust(df: pd.DataFrame) -> pd.DataFrame:
+    """M35: Alpha Vantage 'adjusted' endpoints return RAW ohlc + '5. adjusted close'. Scale the whole
+    OHLC bar to the adjusted (total-return) basis so it matches yfinance auto_adjust — instead of the
+    raw/adjusted mix, where raw close shows split spikes and omits dividends. Maps to OHLCV names and
+    guarantees no duplicate column labels."""
+    df = df.copy()
+    ac, rc = "5. adjusted close", "4. close"
+    if ac in df.columns and rc in df.columns:
+        raw_close = pd.to_numeric(df[rc], errors="coerce")
+        adj_close = pd.to_numeric(df[ac], errors="coerce")
+        factor = adj_close / raw_close.replace(0, pd.NA)
+        for c in ("1. open", "2. high", "3. low"):
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce") * factor
+        df[rc] = adj_close
+    rename_map = {
+        "1. open": "Open", "2. high": "High", "3. low": "Low", "4. close": "Close",
+        "6. volume": "Volume", "5. volume": "Volume",
+    }
+    df = df.rename(columns=rename_map)
+    return df.loc[:, ~df.columns.duplicated()]
 
 
 class AlphaVantageProvider(DataProvider):
@@ -241,9 +267,10 @@ class AlphaVantageProvider(DataProvider):
             av_interval = _AV_INTERVAL_MAP.get(interval, "daily")
 
             if av_interval == "daily":
-                df, _ = ts.get_daily(symbol=symbol, outputsize="full")
+                # M35: the ADJUSTED endpoint (raw endpoint omitted dividends and showed split spikes).
+                df, _ = ts.get_daily_adjusted(symbol=symbol, outputsize="full")
             elif av_interval == "weekly":  # ATS-129
-                df, _ = ts.get_weekly(symbol=symbol)
+                df, _ = ts.get_weekly_adjusted(symbol=symbol)
             else:
                 df, _ = ts.get_intraday(
                     symbol=symbol, interval=av_interval, outputsize="full"
@@ -259,15 +286,8 @@ class AlphaVantageProvider(DataProvider):
             logger.warning("No data from Alpha Vantage for %s", symbol)
             return pd.DataFrame(columns=OHLCV_COLUMNS)
 
-        # Alpha Vantage pandas output uses numbered column names
-        rename_map = {
-            "1. open": "Open",
-            "2. high": "High",
-            "3. low": "Low",
-            "4. close": "Close",
-            "5. volume": "Volume",
-        }
-        df = df.rename(columns=rename_map)
+        # M35: scale the raw OHLC to the adjusted (total-return) basis and map to OHLCV column names.
+        df = _av_adjust(df)
         df.index = pd.to_datetime(df.index)
         df.index.name = "Date"
         df = df.sort_index()
@@ -487,23 +507,32 @@ class CoinGeckoProvider(DataProvider):
 
         s = int(start.timestamp()) if start else int(datetime.now().timestamp() - 365 * 86400)
         e = int(end.timestamp()) if end else int(datetime.now().timestamp())
-        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
-        # CoinGecko OHLC supports 1, 7, 14, 30, 90, 180, 365 days
-        days = max(1, (e - s) // 86400)
-        if days > 365:
-            days = 365
+        # M34: use market_chart/range, which HONORS [from,to]. The /ohlc endpoint ignored start/end and
+        # returned the most-recent N days ending today — a request for 2021 silently got 2025 data. Note
+        # market_chart returns price POINTS (not true OHLC), so O=H=L=C=price; volume is real (NaN if absent).
+        url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart/range"
         try:
-            resp = httpx.get(url, params={"vs_currency": "usd", "days": str(days)}, timeout=30)
+            resp = httpx.get(url, params={"vs_currency": "usd", "from": str(s), "to": str(e)}, timeout=30)
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
             raise DataProviderError(f"CoinGecko failed for {symbol}: {exc}") from exc
-        if not data:
+        prices = (data or {}).get("prices") or []
+        if not prices:
             return pd.DataFrame(columns=OHLCV_COLUMNS)
-        df = pd.DataFrame(data, columns=["timestamp", "Open", "High", "Low", "Close"])
-        df["Date"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df["Volume"] = 0  # CoinGecko OHLC doesn't include volume
-        df = df.set_index("Date").sort_index()
+        vols = {int(t): v for t, v in ((data or {}).get("total_volumes") or [])}
+        records = [
+            {"Date": pd.to_datetime(int(t), unit="ms"),
+             "Open": p, "High": p, "Low": p, "Close": p,
+             "Volume": vols.get(int(t), float("nan"))}
+            for t, p in prices
+        ]
+        df = pd.DataFrame(records).set_index("Date").sort_index()
+        # Clamp exactly to the requested window (inclusive), matching the other providers' contract.
+        if start is not None:
+            df = df[df.index >= pd.Timestamp(start)]
+        if end is not None:
+            df = df[df.index <= pd.Timestamp(end)]
         return df[OHLCV_COLUMNS].copy()
 
 
@@ -553,11 +582,21 @@ class TiingoProvider(DataProvider):
         df = pd.DataFrame(data)
         date_col = "date" if "date" in df.columns else "Date"
         df["Date"] = pd.to_datetime(df[date_col])
-        col_map = {
-            "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume",
-            "adjOpen": "Open", "adjHigh": "High", "adjLow": "Low", "adjClose": "Close", "adjVolume": "Volume",
-        }
-        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+        # M33: Tiingo returns BOTH raw (open/close/…) and adjusted (adjOpen/adjClose/…) fields.
+        # Renaming both to Open/Close/… produced DUPLICATE labels, so df["Close"] became a 2-column
+        # frame and float(row["Close"]) raised. Prefer the split+dividend-adjusted series (total-return,
+        # consistent with yfinance auto_adjust); fall back to the raw field only when the adjusted one
+        # is absent, and never map two source columns onto the same target.
+        adj_map = {"adjOpen": "Open", "adjHigh": "High", "adjLow": "Low", "adjClose": "Close", "adjVolume": "Volume"}
+        raw_map = {"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"}
+        rename: dict[str, str] = {src: dst for src, dst in adj_map.items() if src in df.columns}
+        taken = set(rename.values())
+        for src, dst in raw_map.items():
+            if dst not in taken and src in df.columns:
+                rename[src] = dst
+                taken.add(dst)
+        df = df.rename(columns=rename)
+        df = df.loc[:, ~df.columns.duplicated()]        # drop any un-renamed leftover raw/adj labels
         df = df.set_index("Date").sort_index()
         available = [c for c in OHLCV_COLUMNS if c in df.columns]
         if len(available) < 5:
@@ -630,10 +669,13 @@ class AlpacaDataProvider(DataProvider):
 
 
 class AggregatedDataProvider(DataProvider):
-    """Meta-provider that tries multiple sources and returns the best result.
+    """Meta-provider that tries multiple sources in PRIORITY order.
 
-    Priority: tries each provider in order, returns the one with the most
-    data points. Falls back through the chain on errors.
+    H22: returns the FIRST provider that answers with data — not whichever returned the most rows.
+    Picking by row count silently blended adjustment conventions (total-return vs split-only vs raw)
+    across a fallback, so the same backtest ran on different price bases depending on who answered.
+    Providers should be ordered by trust/adjustment-compatibility; the chain only falls through on
+    an empty result or an error.
     """
 
     def __init__(self, providers: list[DataProvider]) -> None:
@@ -661,9 +703,11 @@ class AggregatedDataProvider(DataProvider):
             try:
                 df = provider.fetch_ohlcv(symbol, interval, start, end)
                 if df is not None and not df.empty:
-                    if best_df is None or len(df) > len(best_df):
-                        best_df = df
-                        best_source = type(provider).__name__
+                    # H22: first non-empty answer wins (priority order) — do NOT keep scanning for a
+                    # provider with more rows, which would mix adjustment conventions across the chain.
+                    best_df = df
+                    best_source = type(provider).__name__
+                    break
             except Exception as exc:
                 logger.debug(
                     "Provider %s failed for %s: %s",

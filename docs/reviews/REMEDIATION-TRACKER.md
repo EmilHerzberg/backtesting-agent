@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **37 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50 · 2A: H3/H14/H15/H16/H17/H18 · 2B: H5 · 2C: H4/H8/H24/M19/M20/M21/M22/M23 · 3B: H27/M47/M53) + L17, L22. **✅ All 3 criticals fixed. Phases 1+2 MERGED to main. Phase 3 IN PROGRESS: 3B (persistence integrity) COMPLETE; 3A (market-data adjustment layer) next.**
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **44 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50 · 2A: H3/H14/H15/H16/H17/H18 · 2B: H5 · 2C: H4/H8/H24/M19/M20/M21/M22/M23 · 3A: H21/H22/H23/M32/M33/M34/M35 · 3B: H27/M47/M53) + L17, L22. **✅ All 3 criticals fixed. Phases 1+2 MERGED to main. Phase 3 COMPLETE (3A market-data adjustment layer + 3B persistence integrity); M36 deferred to bundle with FX finding H32. NEXT = Phase 3 PR to main, then Phase 4 (cost/LLM honesty).**
 
 > **Phase 1 review (2026-07-05, `PHASE1-REVIEW-2026-07-05.md`):** a 9-reviewer adversarial audit found 12 real issues (0 crit, 7 high) — 5 behavioral defects where a fix didn't reach the production path + 7 test-integrity gaps. **All 12 fixed** in commit "Phase 1 review fixes": M4 shipped on the CLI/YAML default; the C3 default-goal Sharpe-floor regression removed; win_rate/profit_factor goals now enforced (not skipped); the generator warm-up mask made effective; the reslice put on the geometric Sharpe scale; and the DSR-loop / reslice-value / generator / M5·L17 / H30 / M24 tests added. Suite 635 pass.
 
@@ -109,13 +109,13 @@
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
 | H21 | High | spec | DONE | `test_marketdata_cache_3a.py` | immutable-snapshot semantics: refresh refetches the FULL window and replaces the range (single adjustment basis), never merges a re-based tail. (adjustment-mode cache-key = small follow-up) |
-| H22 | High | mech | OPEN | | Providers mix adjusted/unadjusted; fallback compatibility |
+| H22 | High | mech | DONE | `test_marketdata_providers_3a.py` | AggregatedDataProvider returns the FIRST (priority) provider that answers, not the most-rows one (no cross-provider basis mixing); + M35 endpoint fix |
 | H23 | High | mech | DONE | `test_marketdata_cache_3a.py` | dedup key normalised to naive-UTC (`_to_naive_utc`) — matches the stored round-trip, so real tz-aware yfinance bars dedup instead of re-inserting |
-| M32 | Med | mech | OPEN | | Yahoo end-exclusive vs inclusive contract |
-| M33 | Med | mech | OPEN | | Tiingo duplicate Close columns |
-| M34 | Med | mech | OPEN | | CoinGecko ignores window/interval |
-| M35 | Med | mech | OPEN | | AlphaVantage unadjusted despite comment (half of H22) |
-| M36 | Med | mech | OPEN | | No currency field (precondition for H32) |
+| M32 | Med | mech | DONE | (applied; contract) | Yahoo `history(end=...)` is exclusive → pass end+1 day so the last bar is inclusive like every other provider |
+| M33 | Med | mech | DONE | `test_marketdata_providers_3a.py` | Tiingo maps only adj* (raw fallback), dedupes columns → no duplicate `Close`, prefers total-return-adjusted |
+| M34 | Med | mech | DONE | `test_marketdata_providers_3a.py` | CoinGecko uses `market_chart/range` (honors [from,to]) + real/NaN volume instead of `/ohlc` recent-N + fabricated 0 |
+| M35 | Med | mech | DONE | `test_marketdata_providers_3a.py` | AlphaVantage uses `*_adjusted` endpoints; `_av_adjust` scales the whole OHLC bar to the adjusted basis |
+| M36 | Med | mech | DEFERRED | | Currency field — a structural precondition for FX finding H32 (no live fix alone); do it WITH H32 |
 
 ### Cluster 3B — Persistence integrity
 | ID | Sev | Bucket | Status | Test | Note |
