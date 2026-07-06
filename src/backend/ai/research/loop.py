@@ -374,13 +374,21 @@ def _compute_regime_decay(spec, in_regime_sharpe, data_agent, executor, window_s
 
 
 def _sidak_t_star(k: int) -> float:
-    """H18/D6 — validation t* corrected for reusing the SAME hold-out across k surfaced ideas.
+    """H18/D6 — validation t* tightened for reusing the SAME hold-out across surfaced ideas.
 
     The regime hold-out is peeked at once per surfaced candidate; held at a fixed 1.65 bar the
-    family-wise false-validation rate inflates (~64% over 20 independent peeks). Šidák keeps it near
-    the intended 5%: per-test ``α_k = 1-(1-0.05)^(1/k)`` and ``t* = Φ⁻¹(1-α_k)``. Clamped to never
-    fall below the single-test bar VALIDATE_T, so reuse only ever TIGHTENS the bar (k=1 ⇒ VALIDATE_T,
-    more peeks ⇒ a higher t*)."""
+    false-validation rate inflates badly (~64% over 20 independent peeks). The k-th peek must clear
+    ``t* = Φ⁻¹(1-α_k)`` with ``α_k = 1-(1-0.05)^(1/k)`` (the Šidák per-test level for k tests), clamped
+    to never fall below the single-test bar VALIDATE_T — so reuse only ever TIGHTENS the bar
+    (k=1 ⇒ VALIDATE_T, k=20 ⇒ ~2.80).
+
+    HONEST SCOPE (review): this is an *online* per-peek escalation, NOT strict family-wise control.
+    Because the k-th test is judged at α_k (an increasing bar) rather than every test at the final
+    α_{k_final}, the realized family-wise false-validation rate is ~1-Π_j(1-α_j) ≈ 11% (k=5), 17%
+    (k=20) — a large mitigation from the 64% fixed-bar baseline, but not the nominal 5%. Earlier-
+    surfaced candidates keep the verdict they earned at their (looser) bar; they are not
+    retro-adjudicated at the final k. The peek count is also per-RUN (in-memory), so re-running the
+    same regime goal re-mines the slice from k=1 — a known residual (see PHASE2-3-REVIEW / H18)."""
     from statistics import NormalDist
     k = max(1, int(k))
     alpha_k = 1.0 - (1.0 - 0.05) ** (1.0 / k)
@@ -811,7 +819,9 @@ async def research_loop(
             _gate_passed = gate_report.get("passed", False)
             _gate_ev: dict[str, Any] = {"passed": _gate_passed, "strategy_hash": spec.get("strategy_hash", "")}
             if not _gate_passed:
-                _failed = gate_report.get("first_failed_gate", "unknown")
+                # M21 (review): a hard-gate ERROR leaves first_failed_gate=None but sets errored_gate;
+                # prefer it so the cause is attributed (not None → "unknown"/filtered downstream).
+                _failed = gate_report.get("first_failed_gate") or gate_report.get("errored_gate") or "unknown"
                 _gate_ev["failed_gate"] = _failed
                 for _r in gate_report.get("results", []):
                     if _r.get("gate_id") == _failed:
@@ -827,7 +837,7 @@ async def research_loop(
                     params=spec.get("params", {}),
                     security_id=state.current_asset,
                     hypothesis_id=hypothesis.hypothesis_id,
-                    failed_gate=gate_report.get("first_failed_gate", "unknown"),
+                    failed_gate=gate_report.get("first_failed_gate") or gate_report.get("errored_gate") or "unknown",
                     gate_details=gate_report,
                     failure_reason="gate_failure",
                 ))
@@ -890,6 +900,18 @@ async def research_loop(
                     equity_curve=_downsample_curve(artifacts.equity_curve),
                     hypothesis_id=state.hypotheses[-1].hypothesis_id if state.hypotheses else "",
                 )
+                # H24 (review): surface SOFT gate FAILs (e.g. a survivorship-biased default provider)
+                # as candidate weaknesses in BOTH modes. Previously only regime mode did this, so a
+                # default robustness run dropped the survivorship caveat entirely. The regime block
+                # below recomputes weaknesses for its confidence tier; here we ensure robustness at
+                # least records the caveat on the candidate (surfaced in the report/dossier).
+                candidate.weaknesses = [
+                    {"gate": _r.get("gate_id"), "value": _r.get("value"),
+                     "threshold": _r.get("threshold"),
+                     "reason": (_r.get("details") or {}).get("reason", "")}
+                    for _r in gate_report.get("results", [])
+                    if "FAIL" in str(_r.get("status", "")).upper() and _r.get("gate_id") != "minimum_activity"
+                ]
                 if getattr(state, "mode", "robustness") == "regime":
                     # Idea-surfacing firewall: regime ideas are UNVALIDATED; the confidence tier aggregates the
                     # sample-tier (activity) MINUS one level per soft-failed quality gate (the weakness profile).

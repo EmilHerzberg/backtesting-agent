@@ -82,10 +82,13 @@ class TestCleanStrategy:
 
 
 class TestCanaryDiscrimination:
-    """H8/M22 — the canary must FAIL the genuinely-leaky control and clear the clean one."""
+    """H8/M22 — the canary catches the genuinely-leaky control (it profits on pure noise) and the clean
+    control does NOT profit on noise. (Review note: on a clean strategy with a weak real-data edge the
+    canary's 'candidate within noise band' arm can still FAIL it, so we do NOT assert r_clean PASS — the
+    honest discrimination is on the NOISE distribution, which is what a leak actually corrupts.)"""
 
     @pytest.mark.finding("H8")
-    def test_canary_catches_the_leaky_control_and_clears_clean(self):
+    def test_canary_catches_the_leaky_control_via_noise_profit(self):
         real = _make_trending_ohlcv(300, seed=99)
         leaky_real, _ = _run_strategy_returns(LeakyFuturePeek, real)
         clean_real, _ = _run_strategy_returns(CleanSMACross, real)
@@ -98,7 +101,8 @@ class TestCanaryDiscrimination:
         # The leaky control profits on PURE NOISE → the canary FAILs it (the positive control now leaks).
         assert r_leaky.status == GateStatus.FAIL
         assert r_leaky.details["noise_mean_sr"] > 0.02
-        # The clean control has no edge on noise → its noise distribution is ~centered at zero.
+        # The clean control has NO edge on noise → its noise distribution is ~centered at zero, well
+        # below the leaky control's. (This — not r_clean's overall PASS/FAIL — is the leak signal.)
         assert r_clean.details["noise_mean_sr"] < r_leaky.details["noise_mean_sr"] / 2
 
     @pytest.mark.finding("M22")
@@ -108,3 +112,25 @@ class TestCanaryDiscrimination:
         r = LeakageCanaryGate().check(GateContext(metrics={}, trades=[], returns=np.zeros(50), equity_curve=[]))
         assert r.status == GateStatus.PASS
         assert r.details["details"]["provisional"] is True
+
+    @pytest.mark.finding("M22")
+    def test_gatekeeper_threads_ohlcv_and_run_fn_to_the_canary(self):
+        """Wiring guard (review): the ResearchGatekeeper facade must forward ohlcv_df (past its metrics
+        allowlist) AND run_strategy_fn (from the context) into the canary — otherwise the canary silently
+        reverts to provisional-pass and the whole M22 wiring is dead while unit tests stay green."""
+        from src.backend.ai.research.gatekeeper import ResearchGatekeeper
+        from src.backend.backtesting.gates.pipeline import GatePipeline
+
+        real = _make_trending_ohlcv(300, seed=99)
+        leaky_real, _ = _run_strategy_returns(LeakyFuturePeek, real)
+        gk = ResearchGatekeeper()
+        gk.pipeline = GatePipeline([LeakageCanaryGate(n_paths=25)])   # isolate the canary
+        res = gk.evaluate(
+            metrics={"ohlcv_df": real, "n_trades": 30},
+            returns=leaky_real,
+            context={"run_strategy_fn": _run_fn(LeakyFuturePeek)},
+        )
+        canary = next(r for r in res["results"] if r["gate_id"] == "leakage_canary")
+        # It actually RAN (not provisional) and caught the leak → ohlcv_df + run_strategy_fn were threaded.
+        assert (canary["details"] or {}).get("provisional") is not True
+        assert "FAIL" in str(canary["status"]).upper()

@@ -36,9 +36,19 @@ logger = logging.getLogger(__name__)
 def _default_fetch(security_id: str, start: str, end: str):
     """Fetch OHLCV data via yfinance (default, free)."""
     try:
+        from datetime import date, timedelta
+
         import yfinance as yf
         ticker = yf.Ticker(security_id)
-        df = ticker.history(start=start, end=end)
+        # M32 (review): yfinance history(end=...) is EXCLUSIVE. Every other provider + the frozen
+        # snapshot treat end as INCLUSIVE, so without +1 day the research loop drops the last requested
+        # bar and disagrees by one bar with the CLI/YahooProvider path. Match the inclusive contract.
+        end_excl = end
+        try:
+            end_excl = (date.fromisoformat(str(end)[:10]) + timedelta(days=1)).isoformat()
+        except Exception:
+            pass
+        df = ticker.history(start=start, end=end_excl)
         if df.empty:
             raise ValueError(f"No data for {security_id}")
         # Ensure standard column names.
@@ -213,11 +223,19 @@ async def run_research(
     # ── OOS lockbox (optional) ────────────────────────────────
     lockbox = None
     if enable_oos:
+        # Review fix: a REQUESTED OOS run must not silently degrade to in-sample validation if the
+        # lockbox can't be built. oos_enabled is derived purely from lockbox presence, and
+        # validated_count/goal_met count in-sample candidates when it's off — so swallowing the error
+        # would let a run the user asked to hold-out-validate report "validated" on in-sample data alone.
+        # Fail loudly instead (honest: we cannot deliver the OOS contract that was requested).
         try:
             from src.backend.backtesting.lockbox.service import OOSLockboxService
             lockbox = OOSLockboxService(db_path=oos_db_path)
         except Exception as exc:
-            logger.warning("OOS lockbox unavailable: %s", exc)
+            raise RuntimeError(
+                f"OOS validation was requested (enable_oos=True) but the lockbox could not be "
+                f"initialised at {oos_db_path!r}: {exc}. Refusing to silently validate in-sample."
+            ) from exc
 
     # ── Run the loop ──────────────────────────────────────────
     logger.info(

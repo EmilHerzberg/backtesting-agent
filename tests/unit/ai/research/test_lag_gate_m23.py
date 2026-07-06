@@ -65,6 +65,20 @@ def test_no_trades_is_unreconstructable_none():
     assert _lagged_sharpe_annual(df, [], warmup_bars=0, sharpe_annual=1.0) is None
 
 
+@pytest.mark.finding("M23")
+def test_executor_attaches_lagged_sharpe_annual_key():
+    """Wiring guard (review): the executor must actually attach lagged_sharpe_annual to its metrics
+    dict — the helper being correct is useless if the producer line is dropped."""
+    from src.backend.ai.research.executor import ResearchExecutor
+    from tests.support.frozen_data import make_ohlcv
+
+    data = make_ohlcv(days=200, seed=3, drift=0.002)
+    spec = {"template_id": "sma_crossover", "params": {"fast_period": 10, "slow_period": 30},
+            "security_id": "T", "strategy_hash": "h"}
+    metrics = ResearchExecutor().run(spec, data)
+    assert "lagged_sharpe_annual" in metrics          # executor attach wired (None if unreconstructable)
+
+
 def _ctx(metrics):
     return GateContext(metrics=metrics, trades=[], returns=[], equity_curve=[])
 

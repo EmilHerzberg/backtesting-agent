@@ -187,11 +187,16 @@ def generate_final_report(state: ResearchState) -> ResearchReport:
     )
 
     # ── OOS Status ─────────────────────────────────────────────
-    oos_passed = sum(1 for r in state.oos_results if r.outcome == "PASS")
-    oos_failed = sum(1 for r in state.oos_results if r.outcome == "FAIL")
+    # Review fix (h16/oos dedup): count UNIQUE strategies (last verdict wins per hash), not raw append
+    # attempts — the H16 recovery re-appends a terminal verdict on every re-find, and a repeatedly
+    # re-proposed UNEVALUATED strategy (which writes no lockbox row) is re-evaluated and re-appended,
+    # so the raw list is per-attempt. Mirror validated_count / the confidence-phrase last-wins map.
+    _oos_by_hash = {r.strategy_hash: r.outcome for r in state.oos_results}
+    oos_passed = sum(1 for o in _oos_by_hash.values() if o == "PASS")
+    oos_failed = sum(1 for o in _oos_by_hash.values() if o == "FAIL")
     # UNEVALUATED (thin sample / data outage — H17) is NOT a terminal verdict: it is not counted as
     # "evaluated", so the pass/fail denominator stays honest.
-    oos_unevaluated = sum(1 for r in state.oos_results if r.outcome == "UNEVALUATED")
+    oos_unevaluated = sum(1 for o in _oos_by_hash.values() if o == "UNEVALUATED")
     report.oos_status.numeric_fields = {
         "oos_evaluated": oos_passed + oos_failed,
         "oos_passed": oos_passed,
@@ -236,7 +241,7 @@ def _descriptors(state: ResearchState) -> dict:
     n_trials = state.total_iterations
     gates = Counter(fc.failed_gate for fc in state.all_failures if fc.failed_gate)
     crit = sum(1 for fc in state.all_failures if fc.failure_reason == "critic_rejection")
-    oos_pass = sum(1 for r in state.oos_results if r.outcome == "PASS")
+    oos_pass = sum(1 for o in {r.strategy_hash: r.outcome for r in state.oos_results}.values() if o == "PASS")  # dedup per hash
     d = {
         "outcome": (
             "nothing survived" if n_cand == 0
