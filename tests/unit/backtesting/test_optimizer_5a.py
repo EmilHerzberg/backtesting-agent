@@ -61,6 +61,21 @@ def test_seeded_optimization_is_reproducible():
     assert a.best_params == b.best_params            # same seed → same sampler sequence → same best
 
 
+@pytest.mark.finding("M17")
+def test_generate_strategy_survives_multiple_optuna_trials():
+    import optuna
+
+    from src.backend.backtesting.strategies.generator import generate_strategy
+
+    def objective(trial):
+        generate_strategy(trial, max_indicators=3)   # builds the dynamic multi-indicator space
+        return 0.0
+
+    study = optuna.create_study()
+    study.optimize(objective, n_trials=5)            # pre-fix: trial 2 raised "dynamic value space"
+    assert len(study.trials) == 5
+
+
 @pytest.mark.finding("M8")
 def test_all_failing_trials_raise_not_negative_inf_best(monkeypatch):
     import src.backend.backtesting.engine.optimizer as opt

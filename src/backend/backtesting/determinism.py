@@ -22,6 +22,14 @@ This module provides a Two-Tier hash scheme plus a small helper to assemble a
 The module is intentionally dependency-light: only ``numpy`` is used beyond
 the stdlib.  ``hashlib.blake2b`` is the workhorse — fast, fixed-length, and
 collision-resistant for our scale (a few hundred trades per run).
+
+NOT-YET-ENFORCED (M57/M58): this fingerprint API is **not wired into the live path** — no production
+run computes or persists a fingerprint (``run_backtest`` / the results store never call
+``compute_run_fingerprint``), and the golden-hash CI gate in ``test_determinism.py`` SKIPS because the
+reference runner script and golden snapshot are absent from this repo. Treat the "bit-identical"
+statement above as the DESIGN INTENT, not an enforced invariant, until the fingerprint is wired and a
+golden snapshot is committed. (Determinism-mode seeding of the optimizer sampler IS enforced — see
+``optimizer.py`` M12.)
 """
 
 from __future__ import annotations
@@ -370,6 +378,13 @@ def apply_determinism_env() -> dict[str, str]:
     Idempotent.  Callers should invoke this *before* importing numpy / scipy
     so that BLAS threading is honoured.  Returns the env vars that were set
     (existing values are not overwritten — caller may pre-pin).
+
+    LIMITATION (M59): setting these at RUNTIME is largely a no-op for their stated purpose —
+    ``PYTHONHASHSEED`` is only read at interpreter startup; the BLAS thread caps are read when the
+    native libs are first imported (this module imports numpy at the top, so any caller runs too late);
+    and ``setdefault`` cannot correct a pre-existing wrong value. For real BLAS determinism set these in
+    a launcher / ``sitecustomize`` before numpy import (or re-exec), and/or use
+    ``threadpoolctl.threadpool_limits(1)`` at runtime.
     """
     targets = {
         "BACKTEST_DETERMINISM_MODE": "true",

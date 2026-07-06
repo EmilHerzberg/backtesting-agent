@@ -78,6 +78,10 @@ class AgentBudgetController:
 
         if usage.current_lineage_id != lineage_id:
             usage.current_lineage_id = lineage_id
+            usage.trials_this_lineage_today = 0   # H20: reset per-lineage — the counter never reset on a
+            # lineage switch, so with the loop minting a new lineage nearly every iteration it acted as a
+            # GLOBAL ~100/day kill switch that silently terminated long runs. (Keyed on the lineage ROOT
+            # by the caller, so it now counts per hypothesis-family, not per per-call uuid.)
 
         # Check limits.
         if usage.trials_this_hypothesis >= self.limits.max_trials_per_hypothesis:

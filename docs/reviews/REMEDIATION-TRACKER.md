@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **59 / 95** (1A-1E + 2A-2C + 3A-3B as before · 4A: H29/M55 · 4B: H25/H26/H28/H31/M37/M38/M39/M40/M41/M42/M43/M44/M45). **✅ All 3 criticals fixed. Phases 1-4 done; Phases 1-3 + review + provider-wiring MERGED to main (Phase 4 PR pending). Phase 2+3 adversarially reviewed.**
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **70 / 95** (1A-1E + 2A-2C + 3A-3B + 4A + 4B as before · 5A: H19/H20/M8/M9/M10/M11/M12/M17/M57/M58/M59). **✅ All 3 criticals fixed. Phases 1-4 MERGED to main. Phase 5 5A (delete-or-wire quarantined subsystems) DONE. Remaining = 5B (strategy/indicator correctness + test coverage: H11/H13/M13-M18/M27/M28/M60 …) + Low backlog.**
 
 **Phase 4 COMPLETE:** 4A (unified cost model, H29/M55) + 4B (H25/H26/H28/H31 + M37–M45 mediums) all DONE. ⚠ H31 needs a one-line DB migration on the running server (`ALTER TABLE research_runs ADD COLUMN model_id VARCHAR(60) DEFAULT ''`). NEXT = Phase 5 (dead-code hygiene).
 
@@ -179,17 +179,17 @@
 ### Cluster 5A — Delete-or-wire quarantined subsystems
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| H19 | High | dec | DECISION | | AgentBudgetController inert (is_mutation always True) — fix or remove |
-| H20 | High | dec | DECISION | | Per-lineage daily counter = global kill switch |
+| H19 | High | dec | DONE | `test_budgets_5a.py` | FIXED: is_mutation computed before the prev-template update; caps keyed on the stable lineage ROOT (not per-call uuid), so the anti-brute-force caps bind |
+| H20 | High | dec | DONE | `test_budgets_5a.py` | per-lineage counter resets on family switch → no longer a global ~100/day kill switch; still binds within a family |
 | M8 | Med | mech | DONE | `test_optimizer_5a.py` | failed trials are PRUNED (not COMPLETE -inf); non-finite objective pruned; all-failed study raises OptimizationError |
 | M9 | Med | mech | DONE | `test_optimizer_5a.py` | unknown composite weight keys rejected up front (was silently weighted nothing) |
 | M10 | Med | mech | DONE | (code) | WalkForwardConfig forwards objective_metric/composite_weights/seed to per-window optimize (was default-only) |
 | M11 | Med | mech | DONE | `test_optimizer_5a.py` | overfitting ratio only above a 0.2 train-Sharpe floor (else NaN, excluded); aggregate is the MEDIAN |
 | M12 | Med | dec | DONE | `test_optimizer_5a.py` | determinism mode now injects a fixed sampler seed (was TPESampler(seed=None)); seeded runs reproducible |
-| M17 | Med | dec | DECISION | | Strategy generator crashes Optuna trial 2 |
-| M57 | Med | dec | DECISION | | Determinism fingerprint API dead |
-| M58 | Med | dec | DECISION | | Determinism CI gate can't run (missing scripts/golden) |
-| M59 | Med | dec | DECISION | | apply_determinism_env no-op |
+| M17 | Med | dec | DONE | `test_optimizer_5a.py` | generate_strategy suggests from a FIXED indicator list + prunes conflicts post-hoc (was dynamic categorical → crashed trial 2); multi-indicator composition usable |
+| M57 | Med | dec | DONE (honest-doc) | (docstring) | fingerprint API docstring downgraded from asserted guarantee to NOT-YET-ENFORCED (not wired into run_backtest/results store) |
+| M58 | Med | dec | DONE (honest-doc) | (docstring) | documented that the golden-hash CI gate SKIPS (scripts/golden absent) — no longer implies enforcement. Wiring the golden gate = backlog |
+| M59 | Med | dec | DONE (honest-doc) | (docstring) | apply_determinism_env docstring states the runtime-no-op limitation (PYTHONHASHSEED/BLAS caps too late; setdefault); real fix = launcher/threadpoolctl (backlog) |
 
 ### Cluster 5B — Missing test coverage & disclosure
 | ID | Sev | Bucket | Status | Test | Note |
