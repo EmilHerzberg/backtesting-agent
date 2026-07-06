@@ -664,6 +664,10 @@ async def research_loop(
 
             # ── Lineage tracking ──
             # New template = new hypothesis = new root lineage; same = child (mutation).
+            # H19: capture is_mutation BEFORE _prev_hypothesis_template is updated below — the old code
+            # recomputed it AFTER the update, so it was ALWAYS True and the mutation cap never fired.
+            _is_mutation = (hypothesis.proposed_template_id == _prev_hypothesis_template
+                            and _prev_hypothesis_template != "")
             if hypothesis.proposed_template_id != _prev_hypothesis_template:
                 lineage = lineage_tracker.create_root(
                     strategy_hash=spec.get("strategy_hash"), declared_by="strategist")
@@ -688,12 +692,17 @@ async def research_loop(
 
         # ── Phase 2b: agent/hypothesis budget guard (T2) ──
         if outcome is None and hypothesis is not None:
-            is_mutation = hypothesis.proposed_template_id == _prev_hypothesis_template
+            is_mutation = _is_mutation   # H19: computed above, before the prev-template update
+            # H19: key the caps on the stable lineage ROOT (a hypothesis FAMILY), not the fresh per-call
+            # hyp_{uuid} — which reset the per-hypothesis counter every iteration, so the anti-brute-force
+            # caps (max_trials_per_hypothesis / max_mutations_after_failed_gate) could never fire.
+            _root = lineage_tracker.get_root(state.current_lineage_id)
+            _family_key = _root.lineage_id if _root is not None else state.current_lineage_id
             try:
                 budget_controller.check_and_consume(
                     agent_id="strategist",
-                    hypothesis_id=hypothesis.hypothesis_id,
-                    lineage_id=state.current_lineage_id,
+                    hypothesis_id=_family_key,
+                    lineage_id=_family_key,
                     is_mutation_after_failure=is_mutation and state.consecutive_failures > 0,
                 )
             except BudgetExceededError as exc:

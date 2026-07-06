@@ -92,15 +92,14 @@ def generate_strategy(
     weights: list[float] = []
 
     for i in range(n_indicators):
-        # Avoid duplicate indicators AND honour conflicting-group exclusions.
-        remaining = [
-            n for n in available
-            if n not in chosen_names and config.is_compatible(chosen_names, n)
-        ]
-        if not remaining:
-            break
-
-        name = trial.suggest_categorical(f"indicator_{i}", remaining)
+        # M17: Optuna requires a FIXED choice set per named categorical param. The old `remaining`
+        # (excluding earlier picks / conflict groups) differed between trials, so trial 2 raised
+        # "CategoricalDistribution does not support dynamic value space" and the whole multi-indicator
+        # composition feature was unusable. Always suggest from the FULL fixed list, then prune duplicates
+        # and conflicts AFTER the suggestion — post-hoc acceptance doesn't change the search space.
+        name = trial.suggest_categorical(f"indicator_{i}", available)
+        if name in chosen_names or not config.is_compatible(chosen_names, name):
+            continue
         chosen_names.append(name)
 
         # Suggest parameters for this indicator
