@@ -45,6 +45,20 @@ def _json(obj: Any) -> str:
         return "{}"
 
 
+def _utc_iso(dt: datetime | None) -> str | None:
+    """M53: SQLite drops tzinfo on round-trip, so a ``DateTime(timezone=True)`` column reads back
+    naive even though the stored value IS UTC. Re-attach UTC before serialization so the frontend's
+    ``new Date(...)`` doesn't parse an offset-less string as LOCAL time (every event would be wrong by
+    the user's UTC offset). Idempotent for already-aware datetimes."""
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+    return str(dt)
+
+
 async def create_run_row(goal_id: str, user_id: int, req: Any) -> None:
     """Insert the research_runs row when a run starts."""
     async with _write_lock, async_session() as session:
@@ -113,10 +127,19 @@ async def persist_snapshot(rec: Any) -> None:
                 run.train_end = getattr(st, "train_end", "") or ""   # P2: select-on-train split boundary
                 run.provider_type = getattr(st, "provider_type", "") or ""   # P2: leakage-marker provenance
 
+            # H27: advance the flush cursors in LOCALS; write them back to rec.* only AFTER the commit
+            # succeeds, so a failed/rolled-back commit is retried next tick — never silently dropped
+            # (the pre-commit increment permanently lost those rows on any commit error).
+            p_events = rec.persisted_events
+            p_hypotheses = rec.persisted_hypotheses
+            p_candidates = rec.persisted_candidates
+            p_failures = rec.persisted_failures
+            p_lineage = rec.persisted_lineage_count
+
             # Append newly buffered events.
             events = rec.events
-            while rec.persisted_events < len(events):
-                ev = events[rec.persisted_events]
+            while p_events < len(events):
+                ev = events[p_events]
                 payload = ev.get("payload") or {}
                 session.add(
                     ResearchEventDB(
@@ -128,13 +151,13 @@ async def persist_snapshot(rec: Any) -> None:
                         strategy_hash=payload.get("strategy_hash"),
                     )
                 )
-                rec.persisted_events += 1
+                p_events += 1
 
             # Append newly found candidates + failures from the live state.
             if st is not None:
                 # Proposals first (the per-attempt record; failures/candidates reference it).
-                while rec.persisted_hypotheses < len(st.hypotheses):
-                    h = st.hypotheses[rec.persisted_hypotheses]
+                while p_hypotheses < len(st.hypotheses):
+                    h = st.hypotheses[p_hypotheses]
                     session.add(
                         ResearchHypothesisDB(
                             goal_id=rec.goal_id,
@@ -148,12 +171,12 @@ async def persist_snapshot(rec: Any) -> None:
                             prior_strength=h.prior_strength,
                         )
                     )
-                    rec.persisted_hypotheses += 1
+                    p_hypotheses += 1
 
                 # OOS outcomes arrive after a candidate is created — map by hash.
                 oos_map = {o.strategy_hash: o.outcome for o in st.oos_results}
-                while rec.persisted_candidates < len(st.candidates):
-                    c = st.candidates[rec.persisted_candidates]
+                while p_candidates < len(st.candidates):
+                    c = st.candidates[p_candidates]
                     session.add(
                         ResearchCandidateDB(
                             goal_id=rec.goal_id,
@@ -174,7 +197,7 @@ async def persist_snapshot(rec: Any) -> None:
                                 "equity_curve": c.equity_curve,
                             }),
                             oos_outcome=oos_map.get(c.strategy_hash, "PENDING"),
-                            lineage_id=run.current_lineage,
+                            lineage_id=getattr(c, "lineage_id", "") or run.current_lineage,  # M47: creation-time lineage
                             hypothesis_id=c.hypothesis_id,
                             params_json=_json(c.params),
                             validation_status=getattr(c, "validation_status", ""),
@@ -184,7 +207,7 @@ async def persist_snapshot(rec: Any) -> None:
                             holdout_json=_json(getattr(c, "holdout", {})),   # P2
                         )
                     )
-                    rec.persisted_candidates += 1
+                    p_candidates += 1
 
                 # Back-fill oos_outcome for candidates whose OOS result arrived
                 # after they were first persisted (cheap — candidates are few).
@@ -199,8 +222,8 @@ async def persist_snapshot(rec: Any) -> None:
                         .values(oos_outcome=outcome)
                     )
 
-                while rec.persisted_failures < len(st.all_failures):
-                    f = st.all_failures[rec.persisted_failures]
+                while p_failures < len(st.all_failures):
+                    f = st.all_failures[p_failures]
                     session.add(
                         ResearchFailureDB(
                             goal_id=rec.goal_id,
@@ -215,10 +238,10 @@ async def persist_snapshot(rec: Any) -> None:
                             params_json=_json(f.params),
                         )
                     )
-                    rec.persisted_failures += 1
+                    p_failures += 1
 
                 # G4: lineage tree — a snapshot (replace on growth, not append-only).
-                if st.lineage_nodes and len(st.lineage_nodes) != rec.persisted_lineage_count:
+                if st.lineage_nodes and len(st.lineage_nodes) != p_lineage:
                     await session.execute(
                         delete(ResearchLineageDB).where(ResearchLineageDB.goal_id == rec.goal_id)
                     )
@@ -233,9 +256,16 @@ async def persist_snapshot(rec: Any) -> None:
                                 node_created_at=str(n.get("created_at") or ""),
                             )
                         )
-                    rec.persisted_lineage_count = len(st.lineage_nodes)
+                    p_lineage = len(st.lineage_nodes)
 
             await session.commit()
+            # H27: commit succeeded — NOW advance the durable cursors. If the commit above raised,
+            # we never reach here, so the same rows are retried on the next flush.
+            rec.persisted_events = p_events
+            rec.persisted_hypotheses = p_hypotheses
+            rec.persisted_candidates = p_candidates
+            rec.persisted_failures = p_failures
+            rec.persisted_lineage_count = p_lineage
     except Exception:  # noqa: BLE001 — persistence must never crash the run
         logger.exception("persist_snapshot failed for run %s", getattr(rec, "goal_id", "?"))
 
@@ -292,7 +322,7 @@ async def load_run_for_state(goal_id: str, user_id: int) -> dict[str, Any] | Non
             "max_seconds": run.max_seconds,
             "current_lineage": run.current_lineage,
             "status": run.status,
-            "started_at": run.started_at,
+            "started_at": _utc_iso(run.started_at),   # M53: UTC-marked so the frontend doesn't read it as local
             "error_message": run.error_message,
             "candidates_count": int(n_cand),
             "failure_count": int(n_fail),
@@ -436,9 +466,9 @@ async def load_runs_list(user_id: int, limit: int = 100) -> list[dict[str, Any]]
                 "max_runs": r.max_runs,
                 "candidates_count": int(cand_counts.get(r.goal_id, 0)),
                 "failure_count": int(fail_counts.get(r.goal_id, 0)),
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "started_at": r.started_at.isoformat() if r.started_at else None,
-                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                "created_at": _utc_iso(r.created_at),
+                "started_at": _utc_iso(r.started_at),
+                "finished_at": _utc_iso(r.finished_at),
                 "provider_type": r.provider_type,   # P2: leakage marker
             }
             for r in runs
@@ -720,7 +750,7 @@ async def load_events(
             out.append(
                 {
                     "id": r.id,
-                    "ts": r.ts,
+                    "ts": _utc_iso(r.ts),
                     "kind": r.kind,
                     "phase": r.phase,
                     "lineage_id": r.lineage_id,

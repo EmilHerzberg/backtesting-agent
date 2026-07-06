@@ -874,6 +874,8 @@ async def research_loop(
                     template_id=spec.get("template_id", ""),
                     params=spec.get("params", {}),
                     security_id=state.current_asset,
+                    lineage_id=state.current_lineage_id,   # M47: capture the lineage at creation, not at flush
+
                     sharpe_annual=sharpe,
                     total_return=metrics.get("total_return", 0.0),
                     max_drawdown=metrics.get("max_drawdown", 0.0),

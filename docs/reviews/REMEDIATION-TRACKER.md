@@ -6,7 +6,7 @@
 **Bucket:** `mech` (mechanical fix, reference formula) · `dec` (decision) · `spec` (technical spec) · `test` (test/coverage) · `infra` (harness/CI).
 **Test:** path of the ID-tagged regression test that proves closure (filled as we go).
 
-**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **34 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50 · 2A: H3/H14/H15/H16/H17/H18 · 2B: H5 · 2C: H4/H8/H24/M19/M20/M21/M22/M23) + L17, L22. **✅ All 3 criticals fixed. Phase 1 COMPLETE + adversarially reviewed. Phase 2 COMPLETE (2A OOS/hold-out · 2B default-OOS/D9 · 2C gates: fixes + lag producer + wired leakage canary). NEXT = Phase 2 PR to main, then Phase 3 (data integrity).**
+**Scoreboard:** in-scope for release = **95** (3 C + 32 H + 60 M). Backlog = 23 L (+ 29 N-notes). Done: **37 / 95** (H7 · 1A: H1/H2/M24/M25 · 1B: C1/H6/H12/M26 · 1C: C2/M5/M6 · 1D: H9/H10/M2/M4 · 1E: C3/H30/M50 · 2A: H3/H14/H15/H16/H17/H18 · 2B: H5 · 2C: H4/H8/H24/M19/M20/M21/M22/M23 · 3B: H27/M47/M53) + L17, L22. **✅ All 3 criticals fixed. Phases 1+2 MERGED to main. Phase 3 IN PROGRESS: 3B (persistence integrity) COMPLETE; 3A (market-data adjustment layer) next.**
 
 > **Phase 1 review (2026-07-05, `PHASE1-REVIEW-2026-07-05.md`):** a 9-reviewer adversarial audit found 12 real issues (0 crit, 7 high) — 5 behavioral defects where a fix didn't reach the production path + 7 test-integrity gaps. **All 12 fixed** in commit "Phase 1 review fixes": M4 shipped on the CLI/YAML default; the C3 default-goal Sharpe-floor regression removed; win_rate/profit_factor goals now enforced (not skipped); the generator warm-up mask made effective; the reslice put on the geometric Sharpe scale; and the DSR-loop / reslice-value / generator / M5·L17 / H30 / M24 tests added. Suite 635 pass.
 
@@ -120,9 +120,9 @@
 ### Cluster 3B — Persistence integrity
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| H27 | High | mech | OPEN | | Flush cursors advance before commit → silent data loss |
-| M47 | Med | mech | OPEN | | Events stamped flush-time not emission-time |
-| M53 | Med | mech | OPEN | | tz-less timestamps → wrong times for non-UTC users |
+| H27 | High | mech | DONE | `test_persistence_3b.py` | flush cursors advance into LOCALS, written back to rec.* only AFTER commit succeeds → failed commit is retried, not dropped |
+| M47 | Med | mech | DONE | `test_persistence_3b.py` | Candidate carries `lineage_id` at creation; persisted with it (not the run's flush-time lineage). NOTE: event ts/phase emission-time precision left as a small backlog follow-up (lesser audit issue) |
+| M53 | Med | mech | DONE | `test_persistence_3b.py` | `_utc_iso()` marks every DB→JSON datetime as UTC (started_at/finished_at/created_at/ts); fixed router `.isoformat()`-on-string crash |
 | M54 | Med | mech | OPEN | | Paused runs become zombies on restart |
 
 ### Standalone (Phase 3)
@@ -214,6 +214,9 @@
 L1 MACD bar-0 SELL · L2 smart-activity z vs t quantiles · L3 nested gate details empty · L4 pruner dead code · L5 check_gaps flags holidays · L6 survivorship disclosure · L7 downsample flattens drawdowns · L8 artifacts not persisted · L9 supports_json_mode default True · L10 investigate==reject · L11 DG-1 confidence-raise · L12 scanner skips 2 sections · L13 spelled-out numbers · L14 USD labeled EUR · L15 preview scope ignored by POST · L16 SSE tail-drop · L17 alpha not annualized (→C2) · L18 spread docstring · L19 costs/ dead · L20 commission doubling · L21 sizers floor to zero · L22 criteria return/pf unparsed (→C3) · L23 goal text leaks dates.
 
 **N-notes (N1–N29):** unverified low observations in Appendix B of the review — triage into backlog opportunistically when touching the relevant file; not independently tracked here.
+
+### Nice-to-have / deferred optimizations (not correctness — perf/polish)
+- **Leakage-canary cost** (from M22): the canary runs per gate-survivor at 50 synthetic backtests each — fine for typical runs (measured +~2s on the suite; survivors-only; standalone backtests unaffected), but cost scales with survivor count on very productive runs. *Improvement:* move it to a bounded post-search audit on the top-K reported candidates + a parametric noise test (mean+2.33σ) so paths drop to ~30 → fixed ~K×30 backtests per run, independent of survivor count. ~1 commit; keeps the `enable_leakage_canary` off-switch. Logged 2026-07-05.
 
 ---
 
