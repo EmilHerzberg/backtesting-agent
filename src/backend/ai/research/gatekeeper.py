@@ -176,6 +176,7 @@ class ResearchGatekeeper:
         return {
             "passed": report.passed,
             "first_failed_gate": report.first_failed_gate,
+            "errored_gate": report.errored_gate,   # M21 (review): surface the errored-hard-gate cause
             "results": [
                 {
                     "gate_id": r.gate_id,

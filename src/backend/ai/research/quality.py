@@ -119,6 +119,11 @@ def _robustness_tier(
         parts.append("in-sample only (no hold-out)")
     elif oos == "UNEVALUATED":
         parts.append("out-of-sample inconclusive (too few trades)")
+    elif oos == "PENDING":
+        # Review fix: live /candidates defaults a missing OOS outcome to PENDING; without this branch
+        # the H5 "no hold-out" disclosure was silently dropped (the tier cap at "moderate" still held,
+        # since only oos=="PASS" earns "strong").
+        parts.append("out-of-sample pending (no hold-out result yet)")
     if dsr is not None:
         parts.append(
             f"multiple-testing check: provisional ({dsr['trials']} trials)"
