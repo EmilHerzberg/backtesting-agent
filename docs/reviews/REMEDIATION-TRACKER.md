@@ -181,11 +181,11 @@
 |----|-----|--------|--------|------|------|
 | H19 | High | dec | DECISION | | AgentBudgetController inert (is_mutation always True) — fix or remove |
 | H20 | High | dec | DECISION | | Per-lineage daily counter = global kill switch |
-| M8 | Med | mech | OPEN | | Failed trials become -inf COMPLETE trials |
-| M9 | Med | mech | OPEN | | Composite ignores unknown weight keys |
-| M10 | Med | mech | OPEN | | Walk-forward ignores YAML optuna settings |
-| M11 | Med | mech | OPEN | | overfitting_score explodes on near-zero train Sharpe |
-| M12 | Med | dec | DECISION | | Seed/determinism plumbing dead |
+| M8 | Med | mech | DONE | `test_optimizer_5a.py` | failed trials are PRUNED (not COMPLETE -inf); non-finite objective pruned; all-failed study raises OptimizationError |
+| M9 | Med | mech | DONE | `test_optimizer_5a.py` | unknown composite weight keys rejected up front (was silently weighted nothing) |
+| M10 | Med | mech | DONE | (code) | WalkForwardConfig forwards objective_metric/composite_weights/seed to per-window optimize (was default-only) |
+| M11 | Med | mech | DONE | `test_optimizer_5a.py` | overfitting ratio only above a 0.2 train-Sharpe floor (else NaN, excluded); aggregate is the MEDIAN |
+| M12 | Med | dec | DONE | `test_optimizer_5a.py` | determinism mode now injects a fixed sampler seed (was TPESampler(seed=None)); seeded runs reproducible |
 | M17 | Med | dec | DECISION | | Strategy generator crashes Optuna trial 2 |
 | M57 | Med | dec | DECISION | | Determinism fingerprint API dead |
 | M58 | Med | dec | DECISION | | Determinism CI gate can't run (missing scripts/golden) |

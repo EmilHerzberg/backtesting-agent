@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -126,7 +127,24 @@ def optimize(
     Raises:
         OptimizationError: If no valid trial completes successfully.
     """
-    sampler = _create_sampler(config.sampler, seed=config.seed)
+    # M9: reject unknown composite weight keys up front — a typo (e.g. "drawdown" vs "max_drawdown")
+    # silently weighted NOTHING (get(key, 0.0)), and all-unknown weights made a constant-0 objective.
+    if config.objective_metric.lower().strip() == "composite":
+        _valid_keys = {"sharpe", "max_drawdown", "return", "sortino", "win_rate", "profit_factor", "calmar"}
+        _unknown = set(config.composite_weights or _DEFAULT_COMPOSITE_WEIGHTS) - _valid_keys
+        if _unknown:
+            raise OptimizationError(
+                f"Unknown composite weight key(s): {sorted(_unknown)}. Valid: {sorted(_valid_keys)}",
+                n_trials=0,
+            )
+
+    # M12: a "deterministic" run must actually SEED the sampler. Determinism mode only clamped n_jobs
+    # and left TPESampler(seed=None), so seeded runs still explored different sequences. Inject a fixed
+    # seed when none is set and determinism mode is on.
+    seed = config.seed
+    if seed is None and _determinism_mode_active():
+        seed = 42
+    sampler = _create_sampler(config.sampler, seed=seed)
     pruner = _create_pruner(config.pruner, warmup_trials=config.pruner_warmup_trials)
 
     # ATS-2004: clamp n_jobs to 1 in determinism mode — parallel Optuna
@@ -168,8 +186,7 @@ def optimize(
         try:
             strategy_cls = config.strategy_class.create_with_params(**params)
         except InvalidParameterError:
-            import optuna
-            raise optuna.TrialPruned("Invalid parameter combination")
+            raise optuna.TrialPruned("Invalid parameter combination")   # module-level optuna (no shadow)
 
         bt_config = BacktestConfig(
             symbol="OPT",
@@ -179,14 +196,21 @@ def optimize(
             commission=config.commission,
         )
 
+        # M8: a failed backtest must be PRUNED, not returned as -inf. Optuna accepts ±inf, so the old
+        # -inf made every exception a COMPLETE trial — the documented "raises if no valid trial completes"
+        # could never fire, an all-failed study picked a -inf "best" and re-ran it, and direction=minimize
+        # would select crashing params. TrialPruned keeps failures out of COMPLETE / best selection.
         try:
             result = run_backtest(bt_config)
         except BacktestError:
-            return float("-inf")
+            raise optuna.TrialPruned("backtest failed")
         except Exception:
-            return float("-inf")
+            raise optuna.TrialPruned("backtest error")
 
-        return _calculate_objective(result, config)
+        value = _calculate_objective(result, config)
+        if not math.isfinite(value):
+            raise optuna.TrialPruned("non-finite objective")   # M8: never let ±inf/NaN win
+        return value
 
     # ATS-181: assemble callbacks (early-stop) + pass timeout / n_jobs
     all_callbacks = list(callbacks) if callbacks else []

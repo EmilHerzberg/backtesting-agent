@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import logging
+import math
+import statistics
 from dataclasses import dataclass, field
+
+# M11: the test/train overfitting ratio is only meaningful above a materially-positive train Sharpe.
+_MIN_TRAIN_SHARPE_FOR_RATIO = 0.2
 
 import pandas as pd
 
@@ -48,6 +53,11 @@ class WalkForwardConfig:
     cash: float = 10_000.0
     commission: float = 0.001
     validation_threshold: float = 0.0
+    # M10: forward the user's optuna settings to per-window optimization (was default composite/TPE only,
+    # while windows were then SCORED on test Sharpe — an internal inconsistency).
+    objective_metric: str = "composite"
+    composite_weights: dict | None = None
+    seed: int | None = None
 
 
 @dataclass
@@ -158,6 +168,9 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
             n_trials=config.n_trials_per_window,
             cash=config.cash,
             commission=config.commission,
+            objective_metric=config.objective_metric,     # M10: honor the user's optuna settings per window
+            composite_weights=config.composite_weights,
+            seed=config.seed,
         )
 
         try:
@@ -198,13 +211,16 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
             continue
 
         # ---- Overfitting score ---------------------------------------- #
-        train_sharpe = train_result.sharpe_ratio if train_result.sharpe_ratio else 0.001
+        train_sharpe = train_result.sharpe_ratio or 0.0
         test_sharpe = test_result.sharpe_ratio if test_result.sharpe_ratio else 0.0
 
-        if train_sharpe > 0:
+        # M11: the test/train ratio is only meaningful above a materially-positive train Sharpe. The old
+        # 0.001 floor mapped a ~0 train Sharpe to ratio=300, and averaging made "closer to 1.0 = less
+        # overfitting" meaningless. Non-measurable windows are NaN and excluded from the aggregate.
+        if train_sharpe >= _MIN_TRAIN_SHARPE_FOR_RATIO:
             overfitting_score = test_sharpe / train_sharpe
         else:
-            overfitting_score = 0.0
+            overfitting_score = float("nan")
 
         is_valid = _window_is_valid(test_result, config.validation_threshold)
 
@@ -245,14 +261,16 @@ def _build_wf_result(
         return WalkForwardResult()
 
     test_sharpes = [w.test_result.sharpe_ratio for w in windows]
-    overfitting_scores = [w.overfitting_score for w in windows]
+    # M11: aggregate only the MEASURABLE (finite) overfitting scores, and report the MEDIAN — robust to
+    # the residual ratio outliers a mean would let a single weak-train window dominate.
+    _finite_of = [w.overfitting_score for w in windows if math.isfinite(w.overfitting_score)]
     valid_count = sum(1 for w in windows if w.is_valid)
     pct_valid = (valid_count / total) * 100.0
 
     return WalkForwardResult(
         windows=windows,
         avg_test_sharpe=(sum(test_sharpes) / len(test_sharpes)) if test_sharpes else 0.0,
-        avg_overfitting_score=(sum(overfitting_scores) / len(overfitting_scores)) if overfitting_scores else 0.0,
+        avg_overfitting_score=(statistics.median(_finite_of) if _finite_of else 0.0),
         pct_valid_windows=pct_valid,
         is_strategy_validated=pct_valid > 50.0,
         combined_equity=combined_equity,
