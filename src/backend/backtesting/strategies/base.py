@@ -96,6 +96,20 @@ class StrategyBase(Strategy):
         # F-016..F-020 fix: validate constraints BEFORE creating subclass
         cls.validate_params(params)
 
+        # M14: reject unknown/typo'd parameter names. An unrecognised key would otherwise become an
+        # inert class attribute — the strategy runs with DEFAULTS while the pipeline records the run
+        # under the requested, untested parameterization. Validate against the template's space.
+        try:
+            _space = cls.parameter_space()
+        except NotImplementedError:
+            _space = {}
+        if _space:
+            _unknown = set(params) - set(_space)
+            if _unknown:
+                raise InvalidParameterError(
+                    f"Unknown parameter(s) for {cls.__name__}: {sorted(_unknown)}. Valid: {sorted(_space)}"
+                )
+
         attrs: dict[str, Any] = {k: v for k, v in params.items()}
         # Preserve access to the original parameter_space definition
         parent = cls

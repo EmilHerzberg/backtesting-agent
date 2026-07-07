@@ -238,12 +238,18 @@ class ResearchState:
         """Candidates that satisfy the user's parsed numeric criteria (C3). When no criteria were
         parsed (``goal.criteria`` empty), every candidate counts — preserving the old raw-count
         behaviour for callers that build a GoalBrief directly."""
+        # M28: a regime idea that FAILED its within-regime hold-out must NOT count toward goal_met /
+        # validated_count (regime mode force-disables OOS, so nothing else excluded it — three
+        # regime_failed ideas would hit "goal_met" and stop the search). regime_validated / unvalidated
+        # still count; only a hard regime_failed is dropped. In robustness mode validation_status is ""
+        # so nothing is excluded.
+        cands = [c for c in self.candidates if getattr(c, "validation_status", "") != "regime_failed"]
         crit = getattr(self.goal, "criteria", None) or []
         if not crit:
-            return list(self.candidates)
+            return list(cands)
         from src.backend.ai.goals.criteria import candidate_meets_criteria
 
-        return [c for c in self.candidates if candidate_meets_criteria(_candidate_metrics(c), crit)]
+        return [c for c in cands if candidate_meets_criteria(_candidate_metrics(c), crit)]
 
     def goal_met(self) -> bool:
         """Whether enough candidates meet the user's criteria (C3 — not a raw candidate count)."""

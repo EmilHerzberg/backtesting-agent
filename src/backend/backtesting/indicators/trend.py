@@ -175,26 +175,27 @@ class ADXIndicator(BacktestIndicator):
     def parameter_space(self) -> dict[str, dict[str, Any]]:
         return {"period": {"type": "int", "low": 7, "high": 30}}
 
-    def compute(self, df: pd.DataFrame) -> pd.Series:
-        """Return the ADX series."""
+    def _di_adx(self, df: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]:
+        """Return (+DI, −DI, ADX). Shared by compute() and signal() so direction is available."""
         self._validate_ohlcv(df)
         high = df["High"]
         low = df["Low"]
         close = df["Close"]
 
-        plus_dm = high.diff()
-        minus_dm = -low.diff()
-
-        plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
-        minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+        # H11: filter directional movement from the RAW series. The old code zeroed plus_dm FIRST and
+        # then compared minus_dm against the already-zeroed plus_dm, so an up-move == down-move tie
+        # yielded plus_dm=0, minus_dm>0 where Wilder requires BOTH to be zero.
+        raw_plus = high.diff()
+        raw_minus = -low.diff()
+        plus_dm = raw_plus.where((raw_plus > raw_minus) & (raw_plus > 0), 0.0)
+        minus_dm = raw_minus.where((raw_minus > raw_plus) & (raw_minus > 0), 0.0)
 
         tr1 = high - low
         tr2 = (high - close.shift()).abs()
         tr3 = (low - close.shift()).abs()
         true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-        # H12: min_periods so the smoothed DI/ATR/ADX are NaN until converged (ADX no longer votes BUY
-        # from bar 1-9 on an unwarmed average).
+        # H12: min_periods so the smoothed DI/ATR/ADX are NaN until converged.
         p = self._period
         atr = true_range.ewm(alpha=1.0 / p, adjust=False, min_periods=p).mean()
         plus_di = 100 * plus_dm.ewm(alpha=1.0 / p, adjust=False, min_periods=p).mean() / atr
@@ -202,13 +203,21 @@ class ADXIndicator(BacktestIndicator):
 
         dx = (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan) * 100
         adx = dx.ewm(alpha=1.0 / p, adjust=False, min_periods=p).mean()
-        return adx
+        return plus_di, minus_di, adx
+
+    def compute(self, df: pd.DataFrame) -> pd.Series:
+        """Return the ADX (trend-strength) series."""
+        return self._di_adx(df)[2]
 
     def signal(self, df: pd.DataFrame) -> pd.Series:
-        """ADX > 25 indicates a trending market (BUY bias); otherwise HOLD."""
-        adx = self.compute(df)
+        """H11: ADX is a DIRECTION-AGNOSTIC trend-strength index — the old signal returned BUY whenever
+        ADX>25, so a strong DOWNtrend (ADX ≫ 25 in a crash) voted BUY on every bar. Direction now comes
+        from +DI vs −DI: BUY a strong uptrend (+DI > −DI, ADX>25), SELL a strong downtrend (−DI > +DI)."""
+        plus_di, minus_di, adx = self._di_adx(df)
         signals = pd.Series(Signal.HOLD, index=df.index)
-        signals[adx > 25] = Signal.BUY
+        strong = adx > 25
+        signals[strong & (plus_di > minus_di)] = Signal.BUY
+        signals[strong & (minus_di > plus_di)] = Signal.SELL
         signals[adx.isna()] = Signal.HOLD
         return signals
 

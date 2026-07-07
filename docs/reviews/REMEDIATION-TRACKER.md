@@ -194,18 +194,18 @@
 ### Cluster 5B — Missing test coverage & disclosure
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| M18 | Med | test | OPEN | | Zero tests for pandas BacktestIndicator library |
+| M18 | Med | test | DONE | `test_indicator_library_m18.py` | reference-value + signal-semantics tests for the pandas indicator lib (RSI/ADX); gates M16/H11 |
 | M30 | Med | test | OPEN | | No select-on-train wiring test |
 | H13 | High | mech | OPEN | | Event gate honored only by SMACrossover |
 | H7 | High | mech | DONE (review) | `tests/unit/backtesting/test_finalize_trades_h7.py` | finalize_trades=True in runner.py; done early as Phase-0 worked example |
 | H8 | High | mech | DONE | `test_leakage_suite.py` | genuinely-leaky control `LeakyFuturePeek` (shift(-1) future peek) replaces the non-leaky `LeakyClosePeek`; discrimination test now asserts canary FAILs leaky / clears clean (done with M22) |
-| H11 | High | mech | OPEN | | ADX strength→BUY + DM tie asymmetry |
+| H11 | High | mech | DONE | `test_indicator_library_m18.py` | ADX signal now DIRECTIONAL (+DI vs −DI; SELL a strong downtrend, was BUY on every bar); DM filtered from the RAW series (tie→both zero) |
 | M13 | Med | mech | OPEN | | size=1.0 buys one share, inverts gate semantics |
-| M14 | Med | mech | OPEN | | create_with_params accepts typo'd params silently |
-| M15 | Med | mech | OPEN | | BollingerBreakout is mean-reversion; planner mis-routes |
-| M16 | Med | mech | OPEN | | RSI/MultiIndicator carry pre-F-014 bug |
+| M14 | Med | mech | DONE | `(suite)` | create_with_params rejects unknown/typo'd param names (was inert attr → ran defaults under recorded params) |
+| M15 | Med | mech | DONE | `test_strategy_5b.py` | planner keyword "breakout" → trend_following (was mean_reversion); BollingerBreakout stays under mean_reversion (what it does) |
+| M16 | Med | mech | DONE | `test_indicator_library_m18.py` | RSI zero-loss → 100 (overbought), not NaN→HOLD; a perfect uptrend now registers overbought |
 | M27 | Med | mech | OPEN | | regime_validated near-unreachable (needs 1B) |
-| M28 | Med | mech | OPEN | | goal_met counts regime_failed as validated |
+| M28 | Med | mech | DONE | `test_strategy_5b.py` | regime_failed candidates excluded from _criteria_satisfying → goal_met/validated_count no longer count failed regime ideas |
 | M29 | Med | mech | OPEN | | Decay retained_fraction divides by ~0 |
 | M31 | Med | mech | OPEN | | Regime candidate metrics train-slice but UI labels full window |
 | M46 | Med | mech | OPEN | | Run-level OOS descriptor over-claims "passed" |
