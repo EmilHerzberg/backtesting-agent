@@ -229,6 +229,55 @@ async def test_select_on_train_wiring_through_run_research(monkeypatch, frozen_o
     assert (split, st.window_end) in windows                # D: HOLD-OUT ran on [train_end, window_end]
 
 
+@pytest.mark.finding("M49")
+async def test_regime_failed_candidate_does_not_advance_the_watermark(monkeypatch, frozen_ohlcv):
+    # M49 (F1): a regime_failed idea is overfit-by-definition (cleared the soft gates on a HIGH in-sample
+    # Sharpe, then its edge collapsed out-of-fit), so it must NOT advance the plateau watermark — else it
+    # re-enters the exact pin-the-watermark harm M49 fixes, in regime mode where regime_failed is common.
+    import numpy as np
+
+    import src.backend.ai.research.run as runmod
+
+    class _SpyExec:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, spec, data, *, warmup_bars=0):
+            return {
+                "sharpe_annual": 5.0, "total_return": 0.4, "max_drawdown": -0.1, "n_trades": 30,
+                "trade_returns": _FLAT, "exposure_time": 0.5, "win_rate": 0.5, "profit_factor": 1.1,
+                "buy_hold_return": 0.1, "buy_hold_sharpe": 0.5, "buy_hold_max_drawdown": -0.15,
+                "benchmark_available": True, "returns": np.zeros(30), "equity_curve": [100.0] * 30,
+                "strategy_hash": spec.get("strategy_hash", ""), "template_id": spec.get("template_id", ""),
+                "params": {}, "commission": 0.00145, "ohlcv_df": data, "lagged_sharpe_annual": None,
+            }
+
+    class _PassGate:
+        def __init__(self, *a, **k):
+            pass
+
+        def evaluate(self, *a, **k):
+            return {"passed": True, "results": [{"gate_id": "minimum_activity", "status": "PASS",
+                                                 "details": {"tier": "adequate"}}]}
+
+        def update_registry_stats(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(runmod, "ResearchExecutor", _SpyExec)
+    monkeypatch.setattr(runmod, "ResearchGatekeeper", _PassGate)
+
+    captured: dict = {}
+    await runmod.run_research(
+        goal="x", assets=["SPY"], mode="regime", window_start="2015-06-01", window_end="2018-01-01",
+        agent_mode="rule_based", enable_oos=False, enable_leakage_canary=False,
+        max_runs=1, target_candidates=1, fetch_fn=frozen_ohlcv,
+        on_start=lambda s: captured.setdefault("state", s),
+    )
+    st = captured["state"]
+    assert st.candidates and st.candidates[0].validation_status == "regime_failed"   # precondition (t~0 < t*)
+    assert 5.0 not in st.best_sharpe_on_asset                                          # pre-fix: [5.0]
+
+
 @pytest.mark.finding("M27")
 def test_thin_holdout_still_reports_observed_sharpe_and_t():
     # M27: a too-thin hold-out is UNVALIDATED (not a verdict), but the observed numbers must not be dropped.

@@ -170,6 +170,10 @@ class ResearchExecutor:
             "buy_hold_return": result.buy_hold_return,
             "buy_hold_sharpe": bh_sharpe,
             "buy_hold_max_drawdown": bh_max_dd,
+            # M46: whether the buy-and-hold benchmark was actually COMPUTABLE (needs >1 return bar). The
+            # runner coalesces an uncomputable buy_hold_return to the float 0.0, indistinguishable from a
+            # genuinely-flat benchmark — so downstream honesty checks must key on this flag, not on 0.0.
+            "benchmark_available": bool(len(returns) > 1),
             "returns": returns,
             "equity_curve": result.equity_curve,
             "strategy_hash": spec.get("strategy_hash", ""),

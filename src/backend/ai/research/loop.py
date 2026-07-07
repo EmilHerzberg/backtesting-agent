@@ -456,8 +456,11 @@ def _run_regime_holdout(spec, data_agent, executor, train_end, window_end, *,
         # M27: still surface the OBSERVED hold-out numbers (Sharpe always; the per-trade t when ≥2 returns
         # make it defined) so the honest "here's what we measured, just not enough to certify" evidence is
         # never dropped — instead of reporting only the trade count.
-        _obs = {"status": "unvalidated",
-                "reason": f"hold-out too thin to validate ({n} < {VALIDATE_MIN_TRADES} trades)",
+        # M27: report the reason that actually tripped — n<MIN, OR too few usable trade returns for a t
+        # (the old string said "(n < MIN trades)" even when n>=MIN but there were <2 returns — false).
+        _reason = (f"hold-out too thin to validate ({n} < {VALIDATE_MIN_TRADES} trades)"
+                   if n < VALIDATE_MIN_TRADES else "hold-out too thin to validate (<2 usable trade returns)")
+        _obs = {"status": "unvalidated", "reason": _reason,
                 "holdout_period": [train_end, window_end], "holdout_trades": n,
                 "holdout_sharpe": round(float(m.get("sharpe_annual", 0.0)), 3)}
         if len(tr) >= 2:
@@ -837,6 +840,7 @@ async def research_loop(
                     "buy_hold_return": metrics.get("buy_hold_return", 0.0),
                     "buy_hold_sharpe": metrics.get("buy_hold_sharpe", 0.0),
                     "buy_hold_max_drawdown": metrics.get("buy_hold_max_drawdown", 0.0),  # M19: Path B was dead without it
+                    "benchmark_available": bool(metrics.get("benchmark_available", True)),  # M46: 0.0 ≠ "no benchmark"
                 },
                 regime_analysis=regime_analysis,
             )
@@ -1046,17 +1050,20 @@ async def research_loop(
 
         if outcome == "candidate":
             state.candidates.append(candidate)
-            # M49: the plateau watermark must track CANDIDATE quality, not the raw in-sample Sharpe of
-            # gate-FAILED / critic-REJECTED trials — one overfit high-Sharpe reject (huge Sharpe on too few
-            # trades → gate fail) would otherwise pin the watermark high and make R4 abandon a still-
-            # productive asset. Only an accepted candidate advances it.
-            state.best_sharpe_on_asset.append(
-                max(sharpe, state.best_sharpe_on_asset[-1]) if state.best_sharpe_on_asset else sharpe)
+            _regime_failed = getattr(candidate, "validation_status", "") == "regime_failed"
+            # M49 (+F1): the plateau watermark must track ACCEPTED-candidate quality, not the raw in-sample
+            # Sharpe of gate-FAILED / critic-REJECTED trials — nor a regime_failed idea, which by definition
+            # cleared the (soft) regime gates on a HIGH in-sample Sharpe and then collapsed out-of-fit, i.e.
+            # exactly the overfit-high-Sharpe profile that would pin the watermark and make R4 abandon a
+            # still-productive asset. A regime_failed idea is surfaced but does NOT advance the watermark.
+            if not _regime_failed:
+                state.best_sharpe_on_asset.append(
+                    max(sharpe, state.best_sharpe_on_asset[-1]) if state.best_sharpe_on_asset else sharpe)
             # M28: a regime idea that FAILED its within-regime hold-out is still *surfaced* (appended) but
             # is NOT a success — it must not reset the consecutive-failure breaker, otherwise a stream of
             # regime_failed ideas would keep R4 (max_consecutive_failures) from ever firing and the loop
             # would grind on a dead asset. Count it as a failure; every other candidate resets as before.
-            if getattr(candidate, "validation_status", "") == "regime_failed":
+            if _regime_failed:
                 state.consecutive_failures += 1
             else:
                 state.consecutive_failures = 0

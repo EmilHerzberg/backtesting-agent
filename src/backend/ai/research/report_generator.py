@@ -274,10 +274,13 @@ def _descriptors(state: ResearchState) -> dict:
         d["best_sharpe"] = (
             "suspiciously high" if sh > 2 else "strong" if sh > 1 else "moderate" if sh > 0.5 else "weak"
         )
-        # M46: a MISSING benchmark must not read as "beat buy-and-hold" — the old `.get(..., 0.0)` made any
-        # positive return beat an absent benchmark. Only claim beat/underperform when a benchmark exists.
-        _bh = (b.benchmark or {}).get("buy_hold_return")
-        if _bh is None:
+        # M46: a MISSING / UNCOMPUTABLE benchmark must not read as "beat buy-and-hold". The runner coalesces
+        # an uncomputable buy-and-hold to the float 0.0 (indistinguishable from a genuinely-flat benchmark),
+        # so we key on the explicit `benchmark_available` flag (set by the executor when >1 return bar
+        # existed), not on the 0.0 sentinel; `_bh is None` covers the reload/empty-dict path too.
+        _bm = b.benchmark or {}
+        _bh = _bm.get("buy_hold_return")
+        if _bh is None or not _bm.get("benchmark_available", True):
             d["vs_benchmark"] = "benchmark unavailable"
         else:
             d["vs_benchmark"] = "beat buy-and-hold" if (b.total_return - _bh) > 0 else "underperformed buy-and-hold"

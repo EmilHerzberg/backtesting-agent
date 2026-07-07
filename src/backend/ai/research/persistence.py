@@ -127,6 +127,9 @@ async def persist_snapshot(rec: Any) -> None:
                 run.train_end = getattr(st, "train_end", "") or ""   # P2: select-on-train split boundary
                 run.provider_type = getattr(st, "provider_type", "") or ""   # P2: leakage-marker provenance
                 run.model_id = getattr(st, "model_id", "") or ""             # H31: per-model leakage badge
+                # M52 (F2): back-fill the EFFECTIVE agent_mode (create_run_row stored the REQUESTED one), so a
+                # full_ai request that degraded to rule_based (no provider resolved) is recorded as it ran.
+                run.agent_mode = getattr(st, "agent_mode", run.agent_mode) or run.agent_mode
 
             # H27: advance the flush cursors in LOCALS; write them back to rec.* only AFTER the commit
             # succeeds, so a failed/rolled-back commit is retried next tick — never silently dropped

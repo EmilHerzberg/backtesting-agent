@@ -79,3 +79,13 @@ def test_create_run_rejects_unknown_enums_and_bad_budgets():
         StartRunRequest(goal_text="x", max_eur=-5)                # negative euro cap
     # a valid request (incl. max_eur=0 = "no cap") still constructs
     StartRunRequest(goal_text="x", agent_mode="full_ai", rigor="strict", max_runs=10, max_eur=0.0)
+
+
+@pytest.mark.finding("M52")
+async def test_run_research_rejects_bad_enums_directly():
+    # F2: the enum guard must also fire inside run_research (defense-in-depth), so a DIRECT (non-API)
+    # caller can't reach the leakage-marker path with a bogus agent_mode / silently coerce a bad rigor.
+    with pytest.raises(ValueError):
+        await run_research(goal="x", assets=["SPY"], agent_mode="turbo")
+    with pytest.raises(ValueError):
+        await run_research(goal="x", assets=["SPY"], rigor="ultra")

@@ -155,6 +155,17 @@ def test_missing_benchmark_is_not_a_beat():
     assert _descriptors(st)["vs_benchmark"] == "benchmark unavailable"   # pre-fix: "beat buy-and-hold"
 
 
+@pytest.mark.finding("M46")
+def test_uncomputable_benchmark_sentinel_is_not_a_beat():
+    # M46 (live path): the runner coalesces an UNCOMPUTABLE buy-and-hold to the float 0.0 — which the loop
+    # actually builds (benchmark dict with buy_hold_return=0.0), so a None-only guard was dead in production.
+    # Key on benchmark_available instead of the 0.0 sentinel.
+    st = _state(n_candidates=1)
+    st.candidates[0].benchmark = {"buy_hold_return": 0.0, "benchmark_available": False}
+    st.candidates[0].total_return = 0.3      # positive return
+    assert _descriptors(st)["vs_benchmark"] == "benchmark unavailable"   # pre-fix: "beat buy-and-hold" (0.3 > 0.0)
+
+
 async def test_honest_tone_in_prompt():
     st = _state(n_candidates=0)
     report = generate_final_report(st)
