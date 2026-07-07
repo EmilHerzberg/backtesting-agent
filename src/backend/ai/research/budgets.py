@@ -1,7 +1,8 @@
 """ATS-1771/1772/1773 — Agent trial budgets.
 
-Prevents brute-force parameter mutation and fake discovery.
-Enforced before execution by the tool interface.
+Prevents brute-force parameter mutation and fake discovery. Enforced INLINE by the research loop
+(``loop.py`` Phase-2b guard) before each proposal is executed — there is no separate "tool interface"
+enforcement layer.
 """
 
 from __future__ import annotations
@@ -17,7 +18,15 @@ class BudgetExceededError(Exception):
 
 @dataclass
 class BudgetLimits:
-    """Configurable budget limits per agent."""
+    """Configurable budget limits per agent.
+
+    BUDGET-2 caveat: on the live path the research loop passes the SAME lineage-root key as both
+    ``hypothesis_id`` and ``lineage_id`` (loop.py Phase-2b), so the per-hypothesis and per-lineage/day
+    counters move in lockstep. With the default limits (25 < 100) the per-hypothesis cap therefore always
+    binds FIRST and the per-lineage/day cap never actually fires on the live path — it is effectively
+    subordinate. It only binds independently under a custom config with a per-hypothesis limit above the
+    per-lineage one, or if a future caller keys the two on genuinely different granularities.
+    """
 
     max_trials_per_hypothesis: int = 25
     max_trials_per_lineage_per_day: int = 100
