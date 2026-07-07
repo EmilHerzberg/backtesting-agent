@@ -23,7 +23,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from src.backend.auth.dependencies import get_current_user_id
 from src.backend.ai.research import persistence
@@ -58,10 +58,12 @@ class StartRunRequest(BaseModel):
     goal_text: str
     asset_pool: list[str] = []
     strategy_families: list[str] = []
-    max_runs: int = 100
-    max_eur: float = 50.0
-    max_seconds: int = 3600
-    target_candidates: int = 3
+    # M52: budgets are bounded up front (were unvalidated → a negative/zero cap was silently accepted and
+    # coerced late). max_eur may be 0 (= "no € cap"); the rest must be positive.
+    max_runs: int = Field(100, ge=1)
+    max_eur: float = Field(50.0, ge=0.0)
+    max_seconds: int = Field(3600, ge=1)
+    target_candidates: int = Field(3, ge=1)
     # F1/F2/F6 — start-options exposed to the UI
     rigor: str = "standard"          # exploratory | standard | strict
     enable_oos: bool = True          # D9/H5: OOS on by default (a run with it off cannot be badged "strong")
@@ -82,6 +84,13 @@ class StartRunRequest(BaseModel):
     def _validate_regime_window(self):
         # P1 fixes M1/S1/S2: the regime window is an atomic, validated pair; robustness ignores it.
         import datetime as _dt
+        # M52: reject unknown enums up front instead of silently coercing them (agent_mode was a free string
+        # — any non-rule_based value resolved an LLM + set a leakage marker; rigor silently fell back to
+        # standard). Fail fast with a clear message so the recorded spec matches what actually ran.
+        if self.agent_mode not in ("rule_based", "ai_assisted", "full_ai"):
+            raise ValueError("agent_mode must be 'rule_based', 'ai_assisted', or 'full_ai'")
+        if self.rigor not in ("exploratory", "standard", "strict"):
+            raise ValueError("rigor must be 'exploratory', 'standard', or 'strict'")
         if self.mode not in ("robustness", "regime"):
             raise ValueError("mode must be 'robustness' or 'regime'")
         if self.mode == "regime":

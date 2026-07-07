@@ -63,3 +63,19 @@ def test_state_response_exposes_train_end():
     from src.backend.ai.research.router import ResearchStateResponse
 
     assert "train_end" in ResearchStateResponse.model_fields   # pre-fix: field absent
+
+
+@pytest.mark.finding("M52")
+def test_create_run_rejects_unknown_enums_and_bad_budgets():
+    # M52: agent_mode/rigor were free strings (silently coerced — a leakage marker set then 0 LLM calls;
+    # rigor fell back to standard) and budgets were unbounded. Reject them up front.
+    with pytest.raises((ValueError, ValidationError)):
+        StartRunRequest(goal_text="x", agent_mode="turbo_mode")   # unknown agent_mode
+    with pytest.raises((ValueError, ValidationError)):
+        StartRunRequest(goal_text="x", rigor="ultra")             # unknown rigor
+    with pytest.raises((ValueError, ValidationError)):
+        StartRunRequest(goal_text="x", max_runs=0)                # non-positive run budget
+    with pytest.raises((ValueError, ValidationError)):
+        StartRunRequest(goal_text="x", max_eur=-5)                # negative euro cap
+    # a valid request (incl. max_eur=0 = "no cap") still constructs
+    StartRunRequest(goal_text="x", agent_mode="full_ai", rigor="strict", max_runs=10, max_eur=0.0)
