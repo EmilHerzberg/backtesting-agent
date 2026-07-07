@@ -149,4 +149,17 @@ def test_run_leakage_badge_is_per_model_not_provider(monkeypatch):
     monkeypatch.setattr(rt, "model_leakage", lambda mid: "unvalidated")
     monkeypatch.setattr(rt, "provider_leakage", lambda pt: "mechanism_only")
     assert rt._run_leakage("deepseek", "deepseek-chat") == "unvalidated"     # the model wins
-    assert rt._run_leakage("deepseek", "") == "mechanism_only"              # fall back only when unknown
+
+
+@pytest.mark.finding("M56")
+def test_unknown_model_fallback_is_not_optimistically_mechanism_only(monkeypatch):
+    # M56: for a run whose model is UNKNOWN (empty model_id — legacy rows / '' migration default), the
+    # provider fallback must NOT upgrade it to mechanism_only just because a validated sibling exists…
+    import src.backend.ai.research.router as rt
+
+    monkeypatch.setattr(rt, "provider_leakage", lambda pt: "mechanism_only")
+    assert rt._run_leakage("deepseek", "") == "unvalidated"      # pre-fix (M56): "mechanism_only"
+
+    # …but a KNOWN provider-level risk is still surfaced (conservative — never hide risk).
+    monkeypatch.setattr(rt, "provider_leakage", lambda pt: "risk")
+    assert rt._run_leakage("gemini", "") == "risk"

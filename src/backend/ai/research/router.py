@@ -27,15 +27,25 @@ from pydantic import BaseModel, model_validator
 
 from src.backend.auth.dependencies import get_current_user_id
 from src.backend.ai.research import persistence
-from src.backend.ai.leakage import model_leakage, provider_leakage
+from src.backend.ai.leakage import RISK, UNVALIDATED, model_leakage, provider_leakage
 
 
 def _run_leakage(provider_type: str, model_id: str = "") -> str:
     """H31: a run's leakage badge = the classification of the MODEL that actually drove selection
     (per-model), falling back to the provider summary only when the model is unknown (rule_based /
     legacy rows). Provider granularity alone was over-optimistic — a provider that ships one validated
-    model badged every run on it clean, even a run that used an unvalidated sibling model."""
-    return model_leakage(model_id) if model_id else provider_leakage(provider_type)
+    model badged every run on it clean, even a run that used an unvalidated sibling model.
+
+    M56: the provider fallback itself is optimistic (``provider_leakage`` returns ``mechanism_only`` if
+    ANY sibling model is validated). For a run whose actual model we DON'T know (empty ``model_id`` —
+    legacy P2..H31 rows, or every such row after the ``model_id DEFAULT ''`` migration) we must never
+    UPGRADE it to ``mechanism_only`` on the strength of a validated sibling it may not have used. Surface
+    a known provider-level ``risk`` (conservative — don't hide risk), but downgrade an optimistic
+    ``mechanism_only`` to ``unvalidated``."""
+    if model_id:
+        return model_leakage(model_id)
+    summary = provider_leakage(provider_type)
+    return summary if summary == RISK else UNVALIDATED
 
 logger = logging.getLogger(__name__)
 
