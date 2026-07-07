@@ -290,3 +290,13 @@ def test_thin_holdout_still_reports_observed_sharpe_and_t():
     ex2 = _FakeExec({"n_trades": 1, "trade_returns": [0.01], "sharpe_annual": 0.7})
     r2 = _run_regime_holdout({}, _FakeData(), ex2, "2019-01-01", "2020-06-01")
     assert r2["holdout_sharpe"] == pytest.approx(0.7) and "holdout_t" not in r2
+
+
+@pytest.mark.finding("M27")
+def test_thin_holdout_reason_names_the_condition_that_tripped():
+    # M27 (re-review F1): when n >= VALIDATE_MIN_TRADES but there are <2 usable trade returns, the reason
+    # must say THAT — the old string unconditionally said "(n < MIN trades)", literally false here.
+    ex = _FakeExec({"n_trades": 25, "trade_returns": [0.01], "sharpe_annual": 1.2})
+    r = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01")
+    assert r["status"] == "unvalidated"
+    assert r["reason"] == "hold-out too thin to validate (<2 usable trade returns)"   # pre-fix: "(25 < 20 trades)"
