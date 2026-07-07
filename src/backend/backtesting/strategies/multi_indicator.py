@@ -55,10 +55,15 @@ class MultiIndicator(StrategyBase):
         delta = s.diff()
         gain = delta.where(delta > 0, 0.0)
         loss = (-delta).where(delta < 0, 0.0)
-        avg_gain = gain.ewm(alpha=1.0 / period, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1.0 / period, adjust=False).mean()
+        # M16/H12 (PATH-2): this LIVE copy carried the same zero-loss/warm-up defect the library
+        # RSIIndicator fixed. min_periods keeps the EWM NaN until converged; the zero-loss guard makes a
+        # perfect up-run read RSI 100 (→ the rsi_sell exit can fire) instead of NaN → skip. EDGE-1: only
+        # a run WITH gains maps to 100 — a flat window (no gains, no losses) stays NaN → HOLD.
+        avg_gain = gain.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+        avg_loss = loss.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
         rs = avg_gain / avg_loss.replace(0, np.nan)
         rsi = 100.0 - 100.0 / (1.0 + rs)
+        rsi = rsi.where(~((avg_loss == 0) & (avg_gain > 0)), 100.0)
         return rsi.values
 
     def init(self) -> None:
@@ -84,7 +89,7 @@ class MultiIndicator(StrategyBase):
         if not self.position:
             # Buy when RSI is oversold AND price is above SMA (uptrend)
             if rsi_val < self.rsi_buy and price > sma_val:
-                self.buy()
+                self._gated_buy()   # H13: through the event gate (no-op when unconfigured)
         else:
             # Sell when RSI is overbought OR price falls below SMA
             if rsi_val > self.rsi_sell or price < sma_val:

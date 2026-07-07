@@ -96,6 +96,20 @@ class StrategyBase(Strategy):
         # F-016..F-020 fix: validate constraints BEFORE creating subclass
         cls.validate_params(params)
 
+        # M14: reject unknown/typo'd parameter names. An unrecognised key would otherwise become an
+        # inert class attribute — the strategy runs with DEFAULTS while the pipeline records the run
+        # under the requested, untested parameterization. Validate against the template's space.
+        try:
+            _space = cls.parameter_space()
+        except NotImplementedError:
+            _space = {}
+        if _space:
+            _unknown = set(params) - set(_space)
+            if _unknown:
+                raise InvalidParameterError(
+                    f"Unknown parameter(s) for {cls.__name__}: {sorted(_unknown)}. Valid: {sorted(_space)}"
+                )
+
         attrs: dict[str, Any] = {k: v for k, v in params.items()}
         # Preserve access to the original parameter_space definition
         parent = cls
@@ -154,9 +168,11 @@ class StrategyBase(Strategy):
 
         Behavior:
             * ``None``           -> no-op
-            * ``SignalDirection.LONG``  -> if not already long, ``self.buy()``
-            * ``SignalDirection.SHORT`` -> if not already short, ``self.sell()``
+            * ``SignalDirection.LONG``  -> if not already long, ``self._gated_buy()``
+            * ``SignalDirection.SHORT`` -> if not already short, ``self._gated_sell()``
             * ``SignalDirection.FLAT``  -> close any open position via ``self.position.close()``
+
+        Entries (long and short) go through the event gate; exits are never gated.
 
         The signal is recorded in :attr:`signal_history` regardless. The
         default ignores ``signal.strength`` — wire up custom sizing in a
@@ -168,10 +184,10 @@ class StrategyBase(Strategy):
         position = getattr(self, "position", None)
         if signal.direction == SignalDirection.LONG:
             if position is None or not position.is_long:
-                self.buy()
+                self._gated_buy()   # H13: entries go through the event gate (no-op when unconfigured)
         elif signal.direction == SignalDirection.SHORT:
             if position is None or not position.is_short:
-                self.sell()
+                self._gated_sell()   # F3: short entries go through the event gate too (no-op when unconfigured)
         elif signal.direction == SignalDirection.FLAT:
             if position is not None and (position.is_long or position.is_short):
                 position.close()
@@ -232,11 +248,8 @@ class StrategyBase(Strategy):
     ) -> tuple[bool, float, "AppliedGate | None"]:
         """Apply the event-gate (if configured) to a pending entry signal.
 
-        Subclasses call this immediately before placing an entry order:
-
-            allow, size, gate = self._apply_event_gate(True, 1.0)
-            if allow and size > 0:
-                self.buy(size=size)
+        Subclasses should enter via ``self._gated_buy()`` (which calls this + maps the size correctly);
+        this lower-level method is exposed for strategies that need the raw ``(allow, size, gate)`` tuple.
 
         Behaviour:
             * If no gate config or ``enabled=False``: returns the inputs
@@ -301,6 +314,45 @@ class StrategyBase(Strategy):
             return allow_entry, new_size, gate
         # Unknown / NO_GATE — passthrough.
         return allow_entry, size_fraction, gate
+
+    def _gated_buy(self, size_fraction: float = 1.0, **kwargs: Any) -> "AppliedGate | None":
+        """Place a long entry THROUGH the event gate, with correct sizing (M13/H13).
+
+        Every template should enter via this helper rather than calling ``self.buy()`` directly, so:
+          * the event gate applies to ALL strategies (H13 — it was honoured only by SMACrossover), and
+          * the size mapping lives in one place (M13). backtesting.py treats ``size >= 1`` as a SHARE
+            COUNT and ``0 < size < 1`` as a fraction of equity, so a naive ``self.buy(size=1.0)`` buys
+            ONE SHARE (~2% exposure) while a REDUCE-gated ``size=0.5`` buys 50% of equity — inverting the
+            gate. Here a full-equity intent (>= 1.0) maps to ``self.buy()`` (buy-max) and a gated
+            fraction stays a fraction.
+
+        With no gate configured this is bit-for-bit ``self.buy()`` (the gate is a passthrough). Returns
+        the ``AppliedGate`` (or ``None``) so callers can inspect why an entry was blocked/reduced.
+        """
+        allow, size, gate = self._apply_event_gate(True, size_fraction)
+        if allow and size > 0:
+            if size >= 1.0:
+                self.buy(**kwargs)                 # full equity (buy-max) — NOT one share
+            else:
+                self.buy(size=size, **kwargs)      # REDUCE: a true fraction of equity
+        return gate
+
+    def _gated_sell(self, size_fraction: float = 1.0, **kwargs: Any) -> "AppliedGate | None":
+        """Place a SHORT entry THROUGH the event gate, with correct sizing (F3 — symmetric to _gated_buy).
+
+        A short is a NEW ENTRY too, so the gate's BLOCK_NEW_ENTRIES / REDUCE_POSITION_SIZE semantics apply
+        to it exactly as they do to a long (``_apply_event_gate`` is direction-agnostic). Without this,
+        a future short-capable strategy routed through :meth:`route_signal` would silently skip the gate.
+        With no gate configured this is bit-for-bit ``self.sell()``. Sizing mirrors :meth:`_gated_buy`:
+        a full-equity intent (>= 1.0) maps to ``self.sell()`` (sell-max) and a gated fraction stays one.
+        """
+        allow, size, gate = self._apply_event_gate(True, size_fraction)
+        if allow and size > 0:
+            if size >= 1.0:
+                self.sell(**kwargs)                # full equity (sell-max) — NOT one share
+            else:
+                self.sell(size=size, **kwargs)     # REDUCE: a true fraction of equity
+        return gate
 
     # ------------------------------------------------------------------ #
     # C1 — warm-up trade mask (generic across every subclass)

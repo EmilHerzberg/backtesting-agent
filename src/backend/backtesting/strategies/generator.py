@@ -207,7 +207,7 @@ def generate_strategy(
 
             if normalised >= self._buy_threshold:
                 if not self.position:
-                    self.buy()
+                    self._gated_buy()   # H13: through the event gate (no-op when unconfigured)
             elif normalised <= self._sell_threshold:
                 if self.position:
                     self.position.close()

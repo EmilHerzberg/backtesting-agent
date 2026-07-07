@@ -58,19 +58,9 @@ class SMACrossover(StrategyBase):
     def next(self) -> None:
         if crossover(self.fast_sma, self.slow_sma):
             if not self.position:
-                # ATS-2080 — event-gate filter. ``_apply_event_gate``
-                # is a no-op when no gate config is attached, so the
-                # pre-2080 behaviour is preserved bit-for-bit.
-                allow, size, _gate = self._apply_event_gate(True, 1.0)
-                if allow and size > 0:
-                    if size >= 1.0:
-                        # backtesting.py treats size==1 as "100% of cash".
-                        self.buy()
-                    else:
-                        # Fractional size — backtesting.py interprets
-                        # ``size`` ∈ (0, 1) as a fraction of available
-                        # cash, which is exactly what REDUCE wants.
-                        self.buy(size=size)
+                # ATS-2080 / M13 / H13 — entry through the event gate with correct sizing. A no-op when
+                # no gate config is attached, so the pre-2080 behaviour is preserved bit-for-bit.
+                self._gated_buy()
         elif crossover(self.slow_sma, self.fast_sma):
             if self.position:
                 self.position.close()

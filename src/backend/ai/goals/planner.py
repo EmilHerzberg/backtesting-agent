@@ -76,8 +76,12 @@ _ASSET_KEYWORDS: dict[str, list[str]] = {
 }
 
 _STRATEGY_KEYWORDS: dict[str, list[str]] = {
-    "trend_following": ["trend", "momentum", "sma", "macd", "moving average"],
-    "mean_reversion": ["mean-reversion", "reversion", "rsi", "bollinger", "breakout"],
+    # M15: a "breakout" is a TREND-following concept (buy the break of resistance). It was routed to
+    # mean_reversion, so a user asking for a breakout strategy silently got mean-reversion — compounded
+    # by BollingerBreakout itself implementing mean-reversion (buy below the lower band). "bollinger"
+    # stays under mean_reversion (that's what the class does); "breakout" now routes to trend_following.
+    "trend_following": ["trend", "momentum", "sma", "macd", "moving average", "breakout"],
+    "mean_reversion": ["mean-reversion", "reversion", "rsi", "bollinger"],
     "multi_factor": ["multi", "kombination", "combined"],
 }
 

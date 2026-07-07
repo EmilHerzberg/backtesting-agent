@@ -6,10 +6,13 @@ import logging
 import math
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import optuna
 import pandas as pd
+
+if TYPE_CHECKING:  # pragma: no cover -- typing only
+    from src.backend.backtesting.config.schema import EventGateConfig
 
 from src.backend.backtesting.engine.exceptions import (
     BacktestError,
@@ -31,6 +34,17 @@ def _determinism_mode_active() -> bool:
     return os.environ.get("BACKTEST_DETERMINISM_MODE", "").strip().lower() in {
         "1", "true", "yes", "on",
     }
+
+
+def _maybe_preload_gates(config: "OptimizationConfig") -> "pd.DataFrame | None":
+    """F1: pre-load event-gate decisions ONCE for the whole study (not per trial) when a gate is
+    configured, so the loaded frame can be threaded into every trial's ``run_backtest``. Returns
+    ``None`` (the runner then ignores ``gates_df``) whenever no gate is enabled — the default,
+    behaviour-identical path."""
+    if config.event_gate is not None and getattr(config.event_gate, "enabled", False):
+        from src.backend.backtesting.engine.runner import _preload_gates_blocking
+        return _preload_gates_blocking(symbol=config.symbol, data=config.data)
+    return None
 
 # Default composite weights used when none are supplied.
 # M4: max_drawdown is a FRACTION (F-013), so the old -0.4 weight made a 50% drawdown contribute only
@@ -89,6 +103,13 @@ class OptimizationConfig:
     # ATS-2004 — Determinism: seed propagates to TPESampler / RandomSampler.
     # In determinism mode, n_jobs is force-clamped to 1.
     seed: int | None = None
+    # F1 (QUANT-REVIEW): the real asset symbol + optional event-gate config. Without these the optimizer
+    # built every BacktestConfig with symbol="OPT" and no event_gate, so a gate configured in YAML never
+    # reached the runner — it was inert on the optimizer path. ``symbol`` keeps its "OPT" placeholder for
+    # the label-only, gate-less case; a gate-using caller (CLI) passes the real ticker so gate decisions
+    # resolve for the asset, and ``event_gate`` is forwarded to every trial + the best-params rerun.
+    symbol: str = "OPT"
+    event_gate: "EventGateConfig | None" = None
 
 
 @dataclass
@@ -147,6 +168,10 @@ def optimize(
     sampler = _create_sampler(config.sampler, seed=seed)
     pruner = _create_pruner(config.pruner, warmup_trials=config.pruner_warmup_trials)
 
+    # F1: load event-gate decisions once up front (no-op when no gate configured) and pass them to every
+    # trial below, so a YAML-configured gate is actually honoured on the optimizer path.
+    gates_df = _maybe_preload_gates(config)
+
     # ATS-2004: clamp n_jobs to 1 in determinism mode — parallel Optuna
     # workers can't be guaranteed to evaluate trials in a stable order, and
     # the TPESampler internal state diverges from the reference single-thread
@@ -189,11 +214,12 @@ def optimize(
             raise optuna.TrialPruned("Invalid parameter combination")   # module-level optuna (no shadow)
 
         bt_config = BacktestConfig(
-            symbol="OPT",
+            symbol=config.symbol,
             strategy_class=strategy_cls,
             data=config.data,
             cash=config.cash,
             commission=config.commission,
+            event_gate=config.event_gate,   # F1: honour the gate on every trial
         )
 
         # M8: a failed backtest must be PRUNED, not returned as -inf. Optuna accepts ±inf, so the old
@@ -201,7 +227,7 @@ def optimize(
         # could never fire, an all-failed study picked a -inf "best" and re-ran it, and direction=minimize
         # would select crashing params. TrialPruned keeps failures out of COMPLETE / best selection.
         try:
-            result = run_backtest(bt_config)
+            result = run_backtest(bt_config, gates_df=gates_df)
         except BacktestError:
             raise optuna.TrialPruned("backtest failed")
         except Exception:
@@ -380,13 +406,14 @@ def _build_optimization_result(
     # Re-run the best params to get the full BacktestResult
     strategy_cls = config.strategy_class.create_with_params(**best_params)
     bt_config = BacktestConfig(
-        symbol="OPT_BEST",
+        symbol=config.symbol,
         strategy_class=strategy_cls,
         data=config.data,
         cash=config.cash,
         commission=config.commission,
+        event_gate=config.event_gate,   # F1: the reported best result is gated too, matching the trials
     )
-    best_result = run_backtest(bt_config)
+    best_result = run_backtest(bt_config, gates_df=_maybe_preload_gates(config))
 
     # Summarise all trials
     all_trials: list[dict[str, Any]] = []
