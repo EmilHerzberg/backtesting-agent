@@ -1,9 +1,0 @@
-{
-  "config_description": "SMA Crossover 10/30 on AAPL 2020-2024",
-  "data_snapshot": "yfinance_snapshot_2026-05-21.parquet",
-  "generated_at": "2026-05-22",
-  "git_sha_at_write": "530a6ed2f133333cf79cff1287f32aee048d5f3d",
-  "h_config": "f73d54bd8befd5912948384edfc93cbea0d7a0ea7b68f7a48e837494c65cb7c9a686a09e64564a5c234e3cdc92acd2f44649daced959189b670479e150836f67",
-  "h_loose": "b09e876873ca93e06d80e651910d7bc42857a7c9988067fbc89940f174cc5761b2700933d90dff3cf9a5001c4782adab3d75b628d97baffcc562e79444154ca8",
-  "h_strict": "ab88b6f407b774733c4f4e7168c73a1339a43f6617c30e10067548d325cef9d0f6275450b618be3ca13b0d6ed7f01c2bc5ea7a1f9d06c03a94e8288dc40934b0"
-}

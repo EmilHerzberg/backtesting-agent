@@ -203,8 +203,9 @@ def _data_snapshot_sha(snapshot_path: Path | None = None) -> str:
     """Return blake2b of the data snapshot file, or ``"missing"`` if absent.
 
     We deliberately do **not** raise here — production runs may not have the
-    golden snapshot.  Only the determinism CI check (which knows it requires
-    the snapshot) should treat ``"missing"`` as a failure.
+    golden snapshot.  Only the determinism CI check *would* treat ``"missing"``
+    as a failure — but that gate is NOT-YET-ENFORCED (see the module note): it
+    currently SKIPS because the snapshot is absent from this repo.
     """
     path = Path(snapshot_path) if snapshot_path else GOLDEN_SNAPSHOT_PATH
     if not path.exists():
@@ -262,8 +263,9 @@ def compute_h_loose(
 
     With ``equity_decimals=9`` (atol=1e-9), runs that differ only in the
     last-bit FP jitter from BLAS or summation-order shuffling will still
-    produce the same ``h_loose``.  This is the metric the CI check uses for
-    its ``np.allclose`` assertion.
+    produce the same ``h_loose``.  This is the metric the golden-hash CI check
+    *would* use for its ``np.allclose`` assertion once the snapshot + runner are
+    committed — that gate is NOT-YET-ENFORCED today (see the module note).
     """
     arr = np.asarray(list(equity_curve), dtype=np.float64)
     if arr.size == 0:
