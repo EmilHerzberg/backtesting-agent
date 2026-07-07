@@ -132,6 +132,40 @@ def test_honest_tone_wiring_zero_candidates():
     assert re.search(r"\d", json.dumps(d)) is None                       # no digit anywhere
 
 
+@pytest.mark.finding("M46")
+def test_oos_descriptor_is_honest_tri_state():
+    from src.backend.ai.research.state import OOSResult
+
+    st = _state(n_candidates=2)
+    # 1 PASS + 1 FAIL must NOT be narrated as "passed out-of-sample" (a single PASS ≠ the run passing).
+    st.oos_results = [OOSResult(strategy_hash="c0", lineage_id="l", outcome="PASS"),
+                      OOSResult(strategy_hash="c1", lineage_id="l", outcome="FAIL")]
+    assert _descriptors(st)["oos"] == "mixed out-of-sample results (some passed, some failed)"
+    # all-UNEVALUATED (thin sample / data outage) must NOT be narrated as "failed out-of-sample".
+    st.oos_results = [OOSResult(strategy_hash="c0", lineage_id="l", outcome="UNEVALUATED")]
+    assert _descriptors(st)["oos"] == "out-of-sample inconclusive (too few trades)"
+    assert re.search(r"\d", json.dumps(_descriptors(st))) is None        # stays digit-free (AC-7)
+
+
+@pytest.mark.finding("M46")
+def test_missing_benchmark_is_not_a_beat():
+    st = _state(n_candidates=1)
+    st.candidates[0].benchmark = {}          # no benchmark to compare against
+    st.candidates[0].total_return = 0.3      # positive return
+    assert _descriptors(st)["vs_benchmark"] == "benchmark unavailable"   # pre-fix: "beat buy-and-hold"
+
+
+@pytest.mark.finding("M46")
+def test_uncomputable_benchmark_sentinel_is_not_a_beat():
+    # M46 (live path): the runner coalesces an UNCOMPUTABLE buy-and-hold to the float 0.0 — which the loop
+    # actually builds (benchmark dict with buy_hold_return=0.0), so a None-only guard was dead in production.
+    # Key on benchmark_available instead of the 0.0 sentinel.
+    st = _state(n_candidates=1)
+    st.candidates[0].benchmark = {"buy_hold_return": 0.0, "benchmark_available": False}
+    st.candidates[0].total_return = 0.3      # positive return
+    assert _descriptors(st)["vs_benchmark"] == "benchmark unavailable"   # pre-fix: "beat buy-and-hold" (0.3 > 0.0)
+
+
 async def test_honest_tone_in_prompt():
     st = _state(n_candidates=0)
     report = generate_final_report(st)

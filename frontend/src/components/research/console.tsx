@@ -155,9 +155,17 @@ export function BudgetHUD({ state }: { state: ResearchState | null }) {
       {state.mode === "regime" && (
         <span
           className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800"
-          title={`regime-fit window ${state.window_start} → ${state.window_end} — NOT robustness-validated`}
+          // M31: when a select-on-train split exists, candidate metrics are measured on the TRAIN slice
+          // [window_start, train_end]; label that (not the full window) and note the hold-out. No split → full window.
+          title={
+            state.train_end
+              ? `regime-fit — metrics on train slice ${state.window_start} → ${state.train_end}; hold-out → ${state.window_end} — NOT robustness-validated`
+              : `regime-fit window ${state.window_start} → ${state.window_end} — NOT robustness-validated`
+          }
         >
-          regime · {state.window_start}→{state.window_end} · UNVALIDATED
+          {state.train_end
+            ? <>regime · train {state.window_start}→{state.train_end} · hold-out →{state.window_end} · UNVALIDATED</>
+            : <>regime · {state.window_start}→{state.window_end} · UNVALIDATED</>}
         </span>
       )}
       {state.leakage === "risk" && (

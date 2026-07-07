@@ -336,6 +336,41 @@ class TestResearchLoop:
         assert spy._get_usage("strategist").trials_this_hypothesis >= 3
 
     @pytest.mark.asyncio
+    @pytest.mark.finding("M49")
+    async def test_gate_failed_sharpe_does_not_pollute_plateau_watermark(self):
+        # M49: the plateau watermark must track CANDIDATE quality, not the raw in-sample Sharpe of
+        # gate-FAILED trials — an overfit high-Sharpe reject would otherwise pin the watermark high and
+        # make R4 (asset_exhausted) abandon a still-productive asset.
+        state = _make_state(max_runs=3)
+        strategist, executor, gatekeeper, critic, data_agent = _make_mocks(gate_pass=False)
+        executor.run.return_value = {**_make_good_metrics(), "sharpe_annual": 99.0}
+        gatekeeper.evaluate.return_value = {"passed": False, "first_failed_gate": "dsr", "results": []}
+
+        result = await research_loop(state, strategist, executor, gatekeeper, critic, data_agent)
+
+        assert result.best_sharpe_on_asset == []       # pre-fix: [99.0, 99.0, 99.0] (gate-failed Sharpe)
+
+    @pytest.mark.asyncio
+    @pytest.mark.finding("M48")
+    async def test_persistent_skips_trip_the_skip_breaker(self):
+        # M48: when every proposal is blocked by the budget guard (persistent skips → no progress, one
+        # paid strategist call per spin), the Director must stop the zombie spin, not run to the T6 cap.
+        from src.backend.ai.research.budgets import AgentBudgetController, BudgetLimits
+
+        state = _make_state(max_runs=20)
+        state.goal.target_candidates = 99             # never meet the goal
+        strategist, executor, gatekeeper, critic, data_agent = _make_mocks()
+        strategist.propose.side_effect = lambda *a, **k: (_make_hypothesis("sma_crossover"), _make_spec())
+        ctrl = AgentBudgetController(BudgetLimits(max_trials_per_hypothesis=2))  # 3rd+ proposal → skip
+
+        result = await research_loop(
+            state, strategist, executor, gatekeeper, critic, data_agent, budget_controller=ctrl,
+        )
+
+        assert result.stop_reason == "skip_breaker_last"   # pre-fix: "iteration_cap" (spun to the backstop)
+        assert result.total_iterations < 20                # stopped early instead of spinning
+
+    @pytest.mark.asyncio
     async def test_events_emitted(self):
         """on_event callback receives lifecycle events."""
         state = _make_state(max_runs=2)

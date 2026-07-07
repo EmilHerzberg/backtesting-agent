@@ -150,3 +150,143 @@ def test_decay_after_none_when_window_runs_to_now():
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     d = _compute_regime_decay({}, 1.0, _FakeData(), ex, "2015-01-01", today)
     assert d["before"] is not None and d["after"] is None      # no post-window data
+
+
+@pytest.mark.finding("M29")
+def test_decay_near_zero_in_regime_no_absurd_ratio():
+    # M29: a near-zero in-regime Sharpe must not yield an absurd retained_fraction. in=0.02, oor=0.5 →
+    # naive ratio = 25.0 ("2500% retained"). It must be undefined (None), with the signed delta kept.
+    ex = _FakeExec({"sharpe_annual": 0.5})
+    b = _compute_regime_decay({}, 0.02, _FakeData(), ex, "2015-01-01", "2016-06-01")["before"]
+    assert b["retained_fraction"] is None                      # pre-fix: 25.0
+    assert b["retained_delta"] == pytest.approx(0.48, abs=1e-3)   # 0.5 - 0.02 (sign/magnitude preserved)
+
+
+@pytest.mark.finding("M29")
+def test_decay_negative_in_regime_preserves_sign_via_delta():
+    ex = _FakeExec({"sharpe_annual": -0.3})
+    b = _compute_regime_decay({}, -0.5, _FakeData(), ex, "2015-01-01", "2016-06-01")["before"]
+    assert b["retained_fraction"] is None                      # base ≤ 0 → no ratio (pre-fix: None too, but…)
+    assert b["retained_delta"] == pytest.approx(0.2, abs=1e-3)   # …the delta -0.3-(-0.5) is NEW (pre-fix: KeyError)
+
+
+@pytest.mark.finding("M30")
+async def test_select_on_train_wiring_through_run_research(monkeypatch, frozen_ohlcv):
+    # M30: the select-on-train wiring (strategist/critic get the TRAIN slice; the hold-out runs on
+    # [train_end, window_end]) is anti-leakage-critical but was untested — it could silently regress to
+    # the full window with zero failures. This drives the REAL run.py split + strategist construction and
+    # asserts the window routing. (It PASSES on main — its value is as a regression gate: flipping
+    # run.py's `window_end=train_we` to the full window makes assertion C fail.)
+    import numpy as np
+
+    import src.backend.ai.research.run as runmod
+    from src.backend.ai.research.loop import _train_split
+
+    windows: list[tuple] = []
+
+    class _SpyExec:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, spec, data, *, warmup_bars=0):
+            windows.append((spec.get("window_start"), spec.get("window_end")))
+            return {
+                "sharpe_annual": 1.4, "total_return": 0.3, "max_drawdown": -0.1, "n_trades": 30,
+                "trade_returns": _STRONG, "exposure_time": 0.5, "win_rate": 0.6, "profit_factor": 1.8,
+                "buy_hold_return": 0.1, "buy_hold_sharpe": 0.5, "buy_hold_max_drawdown": -0.15,
+                "returns": np.zeros(30), "equity_curve": [100.0] * 30,
+                "strategy_hash": spec.get("strategy_hash", ""), "template_id": spec.get("template_id", ""),
+                "params": {}, "commission": 0.00145, "ohlcv_df": data, "lagged_sharpe_annual": None,
+            }
+
+    class _PassGate:
+        def __init__(self, *a, **k):
+            pass
+
+        def evaluate(self, *a, **k):
+            return {"passed": True,
+                    "results": [{"gate_id": "minimum_activity", "status": "PASS",
+                                 "details": {"tier": "adequate"}}]}
+
+        def update_registry_stats(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(runmod, "ResearchExecutor", _SpyExec)
+    monkeypatch.setattr(runmod, "ResearchGatekeeper", _PassGate)
+
+    captured: dict = {}
+    await runmod.run_research(
+        goal="x", assets=["SPY"], mode="regime", window_start="2015-06-01", window_end="2018-01-01",
+        agent_mode="rule_based", enable_oos=False, enable_leakage_canary=False,
+        max_runs=1, target_candidates=1, fetch_fn=frozen_ohlcv,
+        on_start=lambda s: captured.setdefault("state", s),
+    )
+    st = captured["state"]                                   # captured before train_end is set → read now
+    split = _train_split(st.window_start, st.window_end)
+    assert split and st.train_end == split                  # A: the split is recorded on state
+    assert st.window_end == "2018-01-01"                    # B: the FULL window is kept for the hold-out bound
+    assert (st.window_start, split) in windows              # C: SELECTION ran on the TRAIN slice (not full)
+    assert (split, st.window_end) in windows                # D: HOLD-OUT ran on [train_end, window_end]
+
+
+@pytest.mark.finding("M49")
+async def test_regime_failed_candidate_does_not_advance_the_watermark(monkeypatch, frozen_ohlcv):
+    # M49 (F1): a regime_failed idea is overfit-by-definition (cleared the soft gates on a HIGH in-sample
+    # Sharpe, then its edge collapsed out-of-fit), so it must NOT advance the plateau watermark — else it
+    # re-enters the exact pin-the-watermark harm M49 fixes, in regime mode where regime_failed is common.
+    import numpy as np
+
+    import src.backend.ai.research.run as runmod
+
+    class _SpyExec:
+        def __init__(self, *a, **k):
+            pass
+
+        def run(self, spec, data, *, warmup_bars=0):
+            return {
+                "sharpe_annual": 5.0, "total_return": 0.4, "max_drawdown": -0.1, "n_trades": 30,
+                "trade_returns": _FLAT, "exposure_time": 0.5, "win_rate": 0.5, "profit_factor": 1.1,
+                "buy_hold_return": 0.1, "buy_hold_sharpe": 0.5, "buy_hold_max_drawdown": -0.15,
+                "benchmark_available": True, "returns": np.zeros(30), "equity_curve": [100.0] * 30,
+                "strategy_hash": spec.get("strategy_hash", ""), "template_id": spec.get("template_id", ""),
+                "params": {}, "commission": 0.00145, "ohlcv_df": data, "lagged_sharpe_annual": None,
+            }
+
+    class _PassGate:
+        def __init__(self, *a, **k):
+            pass
+
+        def evaluate(self, *a, **k):
+            return {"passed": True, "results": [{"gate_id": "minimum_activity", "status": "PASS",
+                                                 "details": {"tier": "adequate"}}]}
+
+        def update_registry_stats(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(runmod, "ResearchExecutor", _SpyExec)
+    monkeypatch.setattr(runmod, "ResearchGatekeeper", _PassGate)
+
+    captured: dict = {}
+    await runmod.run_research(
+        goal="x", assets=["SPY"], mode="regime", window_start="2015-06-01", window_end="2018-01-01",
+        agent_mode="rule_based", enable_oos=False, enable_leakage_canary=False,
+        max_runs=1, target_candidates=1, fetch_fn=frozen_ohlcv,
+        on_start=lambda s: captured.setdefault("state", s),
+    )
+    st = captured["state"]
+    assert st.candidates and st.candidates[0].validation_status == "regime_failed"   # precondition (t~0 < t*)
+    assert 5.0 not in st.best_sharpe_on_asset                                          # pre-fix: [5.0]
+
+
+@pytest.mark.finding("M27")
+def test_thin_holdout_still_reports_observed_sharpe_and_t():
+    # M27: a too-thin hold-out is UNVALIDATED (not a verdict), but the observed numbers must not be dropped.
+    ex = _FakeExec({"n_trades": 10, "trade_returns": _STRONG[:10], "sharpe_annual": 1.4})
+    r = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01")
+    assert r["status"] == "unvalidated"
+    assert r["holdout_sharpe"] == pytest.approx(1.4)           # pre-fix: key absent in the too-thin branch
+    assert "holdout_t" in r                                    # 10 returns → per-trade t is defined
+    # a genuinely too-thin (<2 returns) slice still reports the Sharpe, just no t
+    ex2 = _FakeExec({"n_trades": 1, "trade_returns": [0.01], "sharpe_annual": 0.7})
+    r2 = _run_regime_holdout({}, _FakeData(), ex2, "2019-01-01", "2020-06-01")
+    assert r2["holdout_sharpe"] == pytest.approx(0.7) and "holdout_t" not in r2

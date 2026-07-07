@@ -222,6 +222,7 @@ class ResearchState:
     hypotheses: list[Hypothesis] = field(default_factory=list)
     consecutive_failures: int = 0
     consecutive_errors: int = 0                       # Director: strategist/data/exec exception streak
+    consecutive_skips: int = 0                        # M48: Director skip-breaker — persistent-skip streak
     attempts_on_current_asset: int = 0                # Director: per-asset trial counter
     best_sharpe_on_asset: list[float] = field(default_factory=list)  # Director: running max Sharpe per trial
     total_iterations: int = 0
@@ -277,6 +278,7 @@ class ResearchState:
         self.failure_context.clear()
         self.consecutive_failures = 0
         self.consecutive_errors = 0
+        self.consecutive_skips = 0
         self.attempts_on_current_asset = 0
         self.best_sharpe_on_asset.clear()
         return True

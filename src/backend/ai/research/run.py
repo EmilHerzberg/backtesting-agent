@@ -178,6 +178,14 @@ async def run_research(
     if strategy_families is None:
         strategy_families = ["trend_following", "mean_reversion", "multi_factor"]  # F4
 
+    # M52 (F2): defense-in-depth — validate the enums here too, not only on the API request. A direct
+    # (non-API) caller with a bogus agent_mode would otherwise resolve an LLM + set the provider leakage
+    # marker below, then make zero LLM calls; a bogus rigor would silently fall back to standard.
+    if agent_mode not in ("rule_based", "ai_assisted", "full_ai"):
+        raise ValueError("agent_mode must be 'rule_based', 'ai_assisted', or 'full_ai'")
+    if rigor not in ("exploratory", "standard", "strict"):
+        raise ValueError("rigor must be 'exploratory', 'standard', or 'strict'")
+
     # F1: Strict rigor forces out-of-sample validation on (also re-enables it if a caller opted out).
     if rigor == "strict":
         enable_oos = True

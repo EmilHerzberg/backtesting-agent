@@ -54,3 +54,38 @@ async def test_run_research_regime_bad_order_raises():
     with pytest.raises(ValueError):
         await run_research(goal="x", assets=["SPY"], mode="regime",
                            window_start="2023-01-01", window_end="2022-01-01")
+
+
+@pytest.mark.finding("M31")
+def test_state_response_exposes_train_end():
+    # M31: the /state response must carry train_end so the UI can label regime candidate metrics with the
+    # train slice they were measured on, instead of the full window.
+    from src.backend.ai.research.router import ResearchStateResponse
+
+    assert "train_end" in ResearchStateResponse.model_fields   # pre-fix: field absent
+
+
+@pytest.mark.finding("M52")
+def test_create_run_rejects_unknown_enums_and_bad_budgets():
+    # M52: agent_mode/rigor were free strings (silently coerced — a leakage marker set then 0 LLM calls;
+    # rigor fell back to standard) and budgets were unbounded. Reject them up front.
+    with pytest.raises((ValueError, ValidationError)):
+        StartRunRequest(goal_text="x", agent_mode="turbo_mode")   # unknown agent_mode
+    with pytest.raises((ValueError, ValidationError)):
+        StartRunRequest(goal_text="x", rigor="ultra")             # unknown rigor
+    with pytest.raises((ValueError, ValidationError)):
+        StartRunRequest(goal_text="x", max_runs=0)                # non-positive run budget
+    with pytest.raises((ValueError, ValidationError)):
+        StartRunRequest(goal_text="x", max_eur=-5)                # negative euro cap
+    # a valid request (incl. max_eur=0 = "no cap") still constructs
+    StartRunRequest(goal_text="x", agent_mode="full_ai", rigor="strict", max_runs=10, max_eur=0.0)
+
+
+@pytest.mark.finding("M52")
+async def test_run_research_rejects_bad_enums_directly():
+    # F2: the enum guard must also fire inside run_research (defense-in-depth), so a DIRECT (non-API)
+    # caller can't reach the leakage-marker path with a bogus agent_mode / silently coerce a bad rigor.
+    with pytest.raises(ValueError):
+        await run_research(goal="x", assets=["SPY"], agent_mode="turbo")
+    with pytest.raises(ValueError):
+        await run_research(goal="x", assets=["SPY"], rigor="ultra")
