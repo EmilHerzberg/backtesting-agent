@@ -54,3 +54,12 @@ async def test_run_research_regime_bad_order_raises():
     with pytest.raises(ValueError):
         await run_research(goal="x", assets=["SPY"], mode="regime",
                            window_start="2023-01-01", window_end="2022-01-01")
+
+
+@pytest.mark.finding("M31")
+def test_state_response_exposes_train_end():
+    # M31: the /state response must carry train_end so the UI can label regime candidate metrics with the
+    # train slice they were measured on, instead of the full window.
+    from src.backend.ai.research.router import ResearchStateResponse
+
+    assert "train_end" in ResearchStateResponse.model_fields   # pre-fix: field absent

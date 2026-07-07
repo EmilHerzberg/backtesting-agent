@@ -331,6 +331,7 @@ async def load_run_for_state(goal_id: str, user_id: int) -> dict[str, Any] | Non
             "mode": run.mode,                                # P1 Chunk C
             "window_start": run.window_start,
             "window_end": run.window_end,
+            "train_end": run.train_end,                      # M31: label regime metrics with the train slice
             "provider_type": run.provider_type,              # P2: leakage marker
             "model_id": run.model_id,                        # H31: per-model leakage badge
         }

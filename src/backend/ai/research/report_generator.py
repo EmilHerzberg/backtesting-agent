@@ -241,7 +241,9 @@ def _descriptors(state: ResearchState) -> dict:
     n_trials = state.total_iterations
     gates = Counter(fc.failed_gate for fc in state.all_failures if fc.failed_gate)
     crit = sum(1 for fc in state.all_failures if fc.failure_reason == "critic_rejection")
-    oos_pass = sum(1 for o in {r.strategy_hash: r.outcome for r in state.oos_results}.values() if o == "PASS")  # dedup per hash
+    _oos = {r.strategy_hash: r.outcome for r in state.oos_results}   # dedup per hash
+    oos_pass = sum(1 for o in _oos.values() if o == "PASS")
+    oos_fail = sum(1 for o in _oos.values() if o == "FAIL")
     d = {
         "outcome": (
             "nothing survived" if n_cand == 0
@@ -255,19 +257,30 @@ def _descriptors(state: ResearchState) -> dict:
         ),
         "dominant_kill_reason": _kill_phrase(gates.most_common(1)[0][0]) if gates else "none",
         "critic": "the critic rejected some survivors" if crit else "the critic rejected nothing",
+        # M46: honest tri-state — a single candidate PASS is NOT "the run passed out-of-sample", and an
+        # all-UNEVALUATED list (thin sample / data outage; H17 appends UNEVALUATED to oos_results) is NOT a
+        # failure. Only terminal PASS/FAIL verdicts drive the phrasing. All phrases stay digit-free.
         "oos": (
-            ("passed out-of-sample" if oos_pass else "failed out-of-sample")
-            if state.oos_results else "no out-of-sample evaluation"
+            "no out-of-sample evaluation" if not state.oos_results
+            else "out-of-sample inconclusive (too few trades)" if (oos_pass + oos_fail) == 0
+            else "mixed out-of-sample results (some passed, some failed)" if oos_pass and oos_fail
+            else "passed out-of-sample" if oos_pass
+            else "failed out-of-sample"
         ),
     }
     if state.candidates:
         b = max(state.candidates, key=lambda c: c.sharpe_annual)
         sh, dd, nt = b.sharpe_annual, b.max_drawdown, b.n_trades
-        excess = b.total_return - (b.benchmark or {}).get("buy_hold_return", 0.0)
         d["best_sharpe"] = (
             "suspiciously high" if sh > 2 else "strong" if sh > 1 else "moderate" if sh > 0.5 else "weak"
         )
-        d["vs_benchmark"] = "beat buy-and-hold" if excess > 0 else "underperformed buy-and-hold"
+        # M46: a MISSING benchmark must not read as "beat buy-and-hold" — the old `.get(..., 0.0)` made any
+        # positive return beat an absent benchmark. Only claim beat/underperform when a benchmark exists.
+        _bh = (b.benchmark or {}).get("buy_hold_return")
+        if _bh is None:
+            d["vs_benchmark"] = "benchmark unavailable"
+        else:
+            d["vs_benchmark"] = "beat buy-and-hold" if (b.total_return - _bh) > 0 else "underperformed buy-and-hold"
         d["drawdown"] = "severe" if dd < -0.3 else "moderate" if dd < -0.1 else "shallow"
         d["trades"] = "many" if nt > 100 else "a moderate number" if nt >= 30 else "few (low significance)"
         d["statistical_confidence"] = _survivor_confidence_phrase(state)  # F-9

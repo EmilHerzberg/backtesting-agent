@@ -150,3 +150,22 @@ async def test_m53_state_started_at_is_utc_marked(monkeypatch):
     finally:
         await drop_tables(engine)
         await engine.dispose()
+
+
+@pytest.mark.finding("M31")
+async def test_train_end_round_trips_through_load_run_for_state(monkeypatch):
+    # M31: regime candidate metrics are measured on the TRAIN slice [window_start, train_end], so the UI
+    # needs train_end to label them (not the full window). Persist it and read it back through the DB row.
+    engine = await _shared_engine()
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        monkeypatch.setattr(persistence, "async_session", factory)
+        await persistence.create_run_row("g_m31", 3, _req())
+        st = _state_with_candidate()
+        st.train_end = "2022-06-01"                             # select-on-train split set by the loop
+        await persistence.persist_snapshot(RunRecord(goal_id="g_m31", user_id=3, state=st, events=[]))
+        row = await persistence.load_run_for_state("g_m31", 3)
+        assert row["train_end"] == "2022-06-01"                 # pre-fix: KeyError (train_end absent)
+    finally:
+        await drop_tables(engine)
+        await engine.dispose()

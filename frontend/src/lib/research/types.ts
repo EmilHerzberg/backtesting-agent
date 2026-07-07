@@ -19,6 +19,7 @@ export interface ResearchState {
   mode?: string; // P1: robustness | regime
   window_start?: string;
   window_end?: string;
+  train_end?: string; // M31: regime select-on-train split — candidate metrics are measured on [window_start, train_end], hold-out is [train_end, window_end]
   provider_type?: string; // P2: effective LLM provider type
   leakage?: string; // P2 (F-11): run provider leakage state (mechanism_only|risk|unvalidated)
   max_seconds: number;
