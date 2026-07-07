@@ -61,6 +61,18 @@ def test_seeded_optimization_is_reproducible():
     assert a.best_params == b.best_params            # same seed → same sampler sequence → same best
 
 
+@pytest.mark.finding("M12")
+def test_determinism_mode_autoseeds_when_no_explicit_seed(monkeypatch):
+    # TI-1: the explicit-seed test above ALSO passed on the pre-fix code (explicit-seed plumbing predates
+    # M12). The behaviour M12 actually added is auto-injecting a fixed seed when BACKTEST_DETERMINISM_MODE
+    # is on and NO seed was supplied — exercise THAT path (seed=None), which was non-reproducible pre-fix.
+    monkeypatch.setenv("BACKTEST_DETERMINISM_MODE", "1")
+    data = make_ohlcv(days=180, seed=4)
+    a = optimize(OptimizationConfig(strategy_class=SMACrossover, data=data, n_trials=5))   # seed=None
+    b = optimize(OptimizationConfig(strategy_class=SMACrossover, data=data, n_trials=5))   # seed=None
+    assert a.best_params == b.best_params            # determinism mode injects a fixed seed → reproducible
+
+
 @pytest.mark.finding("M17")
 def test_generate_strategy_survives_multiple_optuna_trials():
     import optuna

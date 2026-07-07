@@ -168,9 +168,11 @@ class StrategyBase(Strategy):
 
         Behavior:
             * ``None``           -> no-op
-            * ``SignalDirection.LONG``  -> if not already long, ``self.buy()``
-            * ``SignalDirection.SHORT`` -> if not already short, ``self.sell()``
+            * ``SignalDirection.LONG``  -> if not already long, ``self._gated_buy()``
+            * ``SignalDirection.SHORT`` -> if not already short, ``self._gated_sell()``
             * ``SignalDirection.FLAT``  -> close any open position via ``self.position.close()``
+
+        Entries (long and short) go through the event gate; exits are never gated.
 
         The signal is recorded in :attr:`signal_history` regardless. The
         default ignores ``signal.strength`` — wire up custom sizing in a
@@ -185,7 +187,7 @@ class StrategyBase(Strategy):
                 self._gated_buy()   # H13: entries go through the event gate (no-op when unconfigured)
         elif signal.direction == SignalDirection.SHORT:
             if position is None or not position.is_short:
-                self.sell()
+                self._gated_sell()   # F3: short entries go through the event gate too (no-op when unconfigured)
         elif signal.direction == SignalDirection.FLAT:
             if position is not None and (position.is_long or position.is_short):
                 position.close()
@@ -333,6 +335,23 @@ class StrategyBase(Strategy):
                 self.buy(**kwargs)                 # full equity (buy-max) — NOT one share
             else:
                 self.buy(size=size, **kwargs)      # REDUCE: a true fraction of equity
+        return gate
+
+    def _gated_sell(self, size_fraction: float = 1.0, **kwargs: Any) -> "AppliedGate | None":
+        """Place a SHORT entry THROUGH the event gate, with correct sizing (F3 — symmetric to _gated_buy).
+
+        A short is a NEW ENTRY too, so the gate's BLOCK_NEW_ENTRIES / REDUCE_POSITION_SIZE semantics apply
+        to it exactly as they do to a long (``_apply_event_gate`` is direction-agnostic). Without this,
+        a future short-capable strategy routed through :meth:`route_signal` would silently skip the gate.
+        With no gate configured this is bit-for-bit ``self.sell()``. Sizing mirrors :meth:`_gated_buy`:
+        a full-equity intent (>= 1.0) maps to ``self.sell()`` (sell-max) and a gated fraction stays one.
+        """
+        allow, size, gate = self._apply_event_gate(True, size_fraction)
+        if allow and size > 0:
+            if size >= 1.0:
+                self.sell(**kwargs)                # full equity (sell-max) — NOT one share
+            else:
+                self.sell(size=size, **kwargs)     # REDUCE: a true fraction of equity
         return gate
 
     # ------------------------------------------------------------------ #

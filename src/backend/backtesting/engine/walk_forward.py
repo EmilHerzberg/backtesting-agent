@@ -6,6 +6,10 @@ import logging
 import math
 import statistics
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover -- typing only
+    from src.backend.backtesting.config.schema import EventGateConfig
 
 # M11: the test/train overfitting ratio is only meaningful above a materially-positive train Sharpe.
 _MIN_TRAIN_SHARPE_FOR_RATIO = 0.2
@@ -58,6 +62,11 @@ class WalkForwardConfig:
     objective_metric: str = "composite"
     composite_weights: dict | None = None
     seed: int | None = None
+    # F1 (QUANT-REVIEW): the real asset symbol + optional event-gate config, forwarded into BOTH the
+    # per-window optimization and the out-of-sample test backtest so a YAML-configured gate is honoured
+    # consistently across walk-forward (was inert — the inner configs were built without it).
+    symbol: str = "WF"
+    event_gate: "EventGateConfig | None" = None  # noqa: F821 -- forward ref (schema.EventGateConfig)
 
 
 @dataclass
@@ -74,7 +83,9 @@ class WalkForwardWindow:
         train_result: Backtest result on the training data with best params.
         test_result: Backtest result on the out-of-sample test data.
         overfitting_score: ``test_sharpe / train_sharpe`` -- closer to 1.0
-            means less over-fitting.
+            means less over-fitting. M11: ``NaN`` when the train Sharpe is not
+            materially positive (the ratio is meaningless there); such windows
+            are excluded from the aggregate median.
         is_valid: Whether the test Sharpe exceeds the validation threshold.
     """
 
@@ -97,7 +108,10 @@ class WalkForwardResult:
     Attributes:
         windows: Per-window results.
         avg_test_sharpe: Mean Sharpe ratio across all test windows.
-        avg_overfitting_score: Mean overfitting score across windows.
+        avg_overfitting_score: M11 — MEDIAN overfitting score across the *measurable* windows only
+            (those with a materially-positive train Sharpe; degenerate-train windows are NaN and
+            excluded). The ``avg_`` prefix is retained for backward-compat of the field name; the value
+            is a median, not a mean.
         pct_valid_windows: Percentage of windows that passed validation.
         is_strategy_validated: ``True`` when more than 50% of windows pass.
         combined_equity: Concatenated equity curve from all test windows.
@@ -171,6 +185,8 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
             objective_metric=config.objective_metric,     # M10: honor the user's optuna settings per window
             composite_weights=config.composite_weights,
             seed=config.seed,
+            symbol=config.symbol,                          # F1: gate the per-window optimization too
+            event_gate=config.event_gate,
         )
 
         try:
@@ -195,12 +211,13 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
         warmup_bars = min(max_lookback, len(prefix))
         eval_df = pd.concat([prefix.iloc[-warmup_bars:], test_df]) if warmup_bars > 0 else test_df
         test_bt_config = BacktestConfig(
-            symbol="WF",
+            symbol=config.symbol,
             strategy_class=strategy_cls,
             data=eval_df,
             cash=config.cash,
             commission=config.commission,
             warmup_bars=warmup_bars,
+            event_gate=config.event_gate,   # F1: honour the gate on the out-of-sample test too
         )
 
         try:

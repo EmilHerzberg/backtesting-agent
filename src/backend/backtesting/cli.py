@@ -354,6 +354,15 @@ def run_pipeline(
                         cash=config.cash,
                         commission=commission,
                         validation_threshold=config.walk_forward.validation_threshold,
+                        # M10-CLI: forward the user's optuna objective/weights so per-window optimization
+                        # targets what the YAML asked for (was silently dropped here → default composite,
+                        # while windows were scored on test Sharpe — the exact M10 inconsistency).
+                        objective_metric=config.optuna.objective,
+                        composite_weights=config.optuna.composite_weights,
+                        # F1: thread the asset symbol + event-gate config so a YAML gate is honoured in
+                        # walk-forward mode (was inert — WalkForwardConfig was built without it).
+                        symbol=symbol,
+                        event_gate=config.event_gate,
                     )
                     wf_result = walk_forward_validate(wf_config)
 
@@ -435,6 +444,11 @@ def run_pipeline(
                         composite_weights=config.optuna.composite_weights,
                         cash=config.cash,
                         commission=commission,
+                        # F1: thread the asset symbol + event-gate config so a YAML gate is honoured in
+                        # standard optimization mode (was inert — symbol was the "OPT" placeholder and no
+                        # event_gate was passed, so the runner always saw config.event_gate=None).
+                        symbol=symbol,
+                        event_gate=config.event_gate,
                     )
                     opt_result = optimize(opt_config, callbacks=[progress_cb])
                     best = opt_result.best_result

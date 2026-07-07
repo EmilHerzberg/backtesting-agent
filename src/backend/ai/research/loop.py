@@ -218,15 +218,24 @@ def _compute_regime_analysis(market_returns: Any, strategy_returns: Any = None) 
             continue
         mkt_cum = float(np.prod(1 + seg) - 1)
         regime_type = "bull" if mkt_cum > 0.05 else ("bear" if mkt_cum < -0.05 else "sideways")
-        # The strategy's performance IN this market window (falls back to the market if not supplied).
-        s_seg = strat[start:end] if (strat is not None and len(strat) == n) else seg
-        s_cum = float(np.prod(1 + s_seg) - 1)
-        s_sharpe = float(s_seg.mean() / s_seg.std() * np.sqrt(252)) if s_seg.std() > 0 else 0.0
+        # The strategy's performance IN this market window — reported ONLY when the strategy series aligns
+        # 1:1 with the market series. TI-5: on a length mismatch DON'T substitute the market segment (that
+        # silently reports the MARKET's return/Sharpe as if they were the strategy's); mark the strategy
+        # numbers unavailable and report a neutral 0.0 (safe for the critic's numeric regime checks).
+        _aligned = strat is not None and len(strat) == n
+        if _aligned:
+            s_seg = strat[start:end]
+            s_cum = float(np.prod(1 + s_seg) - 1)
+            s_sharpe = float(s_seg.mean() / s_seg.std() * np.sqrt(252)) if s_seg.std() > 0 else 0.0
+        else:
+            s_cum = 0.0
+            s_sharpe = 0.0
         regimes[label] = {
             "type": regime_type,                 # from the MARKET
             "market_return": round(mkt_cum, 4),
-            "return": round(s_cum, 4),           # the STRATEGY's return in this window
+            "return": round(s_cum, 4),           # the STRATEGY's return in this window (0.0 if unavailable)
             "sharpe": round(s_sharpe, 2),
+            "strategy_available": _aligned,
             "n_bars": int(end - start),
         }
 
@@ -774,13 +783,16 @@ async def research_loop(
 
             returns = metrics.get("returns")
             # M60: label regimes from the ASSET's (market) close-to-close returns, not the strategy equity.
+            # TI-5: if the market series is unavailable (missing / malformed ohlcv_df) skip regime labeling
+            # entirely (market_returns=None → {}) rather than silently falling back to the strategy's own
+            # returns — that fallback would reintroduce the exact M60 mislabeling the fix removed.
             _ohlcv = metrics.get("ohlcv_df")
-            _mkt_returns = returns
+            _mkt_returns = None
             try:
                 if _ohlcv is not None and "Close" in _ohlcv:
                     _mkt_returns = _ohlcv["Close"].pct_change().dropna().to_numpy()
             except Exception:
-                _mkt_returns = returns
+                _mkt_returns = None
             regime_analysis = _compute_regime_analysis(_mkt_returns, strategy_returns=returns)
             artifacts = RunArtifacts(
                 run_id=metrics.get("run_id", f"run_{uuid.uuid4().hex[:8]}"),
@@ -1003,7 +1015,14 @@ async def research_loop(
 
         if outcome == "candidate":
             state.candidates.append(candidate)
-            state.consecutive_failures = 0
+            # M28: a regime idea that FAILED its within-regime hold-out is still *surfaced* (appended) but
+            # is NOT a success — it must not reset the consecutive-failure breaker, otherwise a stream of
+            # regime_failed ideas would keep R4 (max_consecutive_failures) from ever firing and the loop
+            # would grind on a dead asset. Count it as a failure; every other candidate resets as before.
+            if getattr(candidate, "validation_status", "") == "regime_failed":
+                state.consecutive_failures += 1
+            else:
+                state.consecutive_failures = 0
             emit("candidate_found", {"strategy_hash": spec.get("strategy_hash", "")})
             # ── C1: auto-OOS BEFORE the Director decides ──
             if oos_enabled:

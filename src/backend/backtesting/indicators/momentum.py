@@ -57,10 +57,12 @@ class RSIIndicator(BacktestIndicator):
 
         rs = avg_gain / avg_loss.replace(0, np.nan)
         rsi = 100.0 - 100.0 / (1.0 + rs)
-        # M16 (F-014): no losses yet (avg_loss == 0) means RSI is 100 (fully overbought), NOT NaN → HOLD.
-        # Otherwise a perfect uptrend never registers as overbought and never emits SELL. The true
-        # warm-up region (avg_loss NaN via min_periods) stays NaN and is masked to HOLD by signal().
-        rsi = rsi.where(~((avg_loss == 0) & avg_gain.notna()), 100.0)
+        # M16 (F-014): a genuine zero-loss up-run (avg_loss == 0 WITH gains) is RSI 100 (fully overbought),
+        # NOT NaN → HOLD — otherwise a perfect uptrend never registers as overbought and never emits SELL.
+        # EDGE-1: require avg_gain > 0 so a flat / zero-momentum window (no gains AND no losses) stays NaN
+        # → HOLD rather than being forced to 100 → a spurious SELL. The true warm-up region (avg_loss NaN
+        # via min_periods) also stays NaN and is masked to HOLD by signal().
+        rsi = rsi.where(~((avg_loss == 0) & (avg_gain > 0)), 100.0)
         return rsi
 
     def signal(self, df: pd.DataFrame) -> pd.Series:

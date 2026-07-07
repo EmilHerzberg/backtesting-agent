@@ -170,7 +170,7 @@
 | M44 | Med | mech | DONE | `test_llm_infra_4b.py` | pricing carried as `float\|None`; ledger `cost_known=False` + no fabricated €0 for unpriced models |
 | M45 | Med | mech | DONE | (code) | `is not None` pricing check so `Decimal("0")` free models serve 0 (not null/unknown) |
 | M56 | Med | mech | OPEN | | provider_leakage optimistic precedence (compounds H31) |
-| M60 | Med | mech | DONE | `test_strategy_5b.py` | `_compute_regime_analysis` labels bull/bear/sideways from the ASSET (market) close-to-close returns; strategy per-window return/Sharpe reported separately. Found by 5. |
+| M60 | Med | mech | DONE | `test_strategy_5b.py` | `_compute_regime_analysis` labels bull/bear/sideways from the ASSET (market) close-to-close returns; strategy per-window return/Sharpe reported separately. Found by 5. 5B-rev (TI-5): call-site no longer falls back to the strategy equity when ohlcv_df is missing (→ market_returns=None → no labels, not a re-mislabel); helper marks the strategy fields unavailable on a length mismatch instead of silently substituting the market's numbers. |
 
 ---
 
@@ -179,13 +179,13 @@
 ### Cluster 5A — Delete-or-wire quarantined subsystems
 | ID | Sev | Bucket | Status | Test | Note |
 |----|-----|--------|--------|------|------|
-| H19 | High | dec | DONE | `test_budgets_5a.py` | FIXED: is_mutation computed before the prev-template update; caps keyed on the stable lineage ROOT (not per-call uuid), so the anti-brute-force caps bind |
+| H19 | High | dec | DONE (test gap) | `test_budgets_5a.py` (controller only) | FIXED: is_mutation computed before the prev-template update; caps keyed on the stable lineage ROOT (not per-call uuid), so the anti-brute-force caps bind. 5B-rev (TI-2): the cited test exercises only `AgentBudgetController` (never the bug) and does NOT gate the inline loop.py wiring — see TI-2 in the 5B-review cluster. |
 | H20 | High | dec | DONE | `test_budgets_5a.py` | per-lineage counter resets on family switch → no longer a global ~100/day kill switch; still binds within a family |
 | M8 | Med | mech | DONE | `test_optimizer_5a.py` | failed trials are PRUNED (not COMPLETE -inf); non-finite objective pruned; all-failed study raises OptimizationError |
 | M9 | Med | mech | DONE | `test_optimizer_5a.py` | unknown composite weight keys rejected up front (was silently weighted nothing) |
-| M10 | Med | mech | DONE | (code) | WalkForwardConfig forwards objective_metric/composite_weights/seed to per-window optimize (was default-only) |
-| M11 | Med | mech | DONE | `test_optimizer_5a.py` | overfitting ratio only above a 0.2 train-Sharpe floor (else NaN, excluded); aggregate is the MEDIAN |
-| M12 | Med | dec | DONE | `test_optimizer_5a.py` | determinism mode now injects a fixed sampler seed (was TPESampler(seed=None)); seeded runs reproducible |
+| M10 | Med | mech | DONE | `test_event_gate_wiring_5b.py` | WalkForwardConfig forwards objective_metric/composite_weights/seed to per-window optimize (was default-only). 5B-rev (M10-CLI): the CLI walk-forward branch now ALSO forwards `config.optuna.objective`/`composite_weights` into WalkForwardConfig (they were dropped there, so a YAML objective was still ignored in WF mode); determinism-seed reaches WF via env auto-inject. |
+| M11 | Med | mech | DONE | `test_optimizer_5a.py` | overfitting ratio only above a 0.2 train-Sharpe floor (else NaN, excluded); aggregate is the MEDIAN. 5B-rev: WalkForwardResult/Window docstrings corrected (field is a MEDIAN of the measurable windows, not a "mean across windows"). |
+| M12 | Med | dec | DONE | `test_optimizer_5a.py` | determinism mode now injects a fixed sampler seed (was TPESampler(seed=None)); seeded runs reproducible. 5B-rev (TI-1): added a gating test for the ACTUAL fix — `BACKTEST_DETERMINISM_MODE` + seed=None → reproducible (the prior explicit-seed test also passed pre-fix, so it did not gate the injection). |
 | M17 | Med | dec | DONE | `test_optimizer_5a.py` | generate_strategy suggests from a FIXED indicator list + prunes conflicts post-hoc (was dynamic categorical → crashed trial 2); multi-indicator composition usable |
 | M57 | Med | dec | DONE (honest-doc) | (docstring) | fingerprint API docstring downgraded from asserted guarantee to NOT-YET-ENFORCED (not wired into run_backtest/results store) |
 | M58 | Med | dec | DONE (honest-doc) | (docstring) | documented that the golden-hash CI gate SKIPS (scripts/golden absent) — no longer implies enforcement. Wiring the golden gate = backlog |
@@ -196,22 +196,35 @@
 |----|-----|--------|--------|------|------|
 | M18 | Med | test | DONE | `test_indicator_library_m18.py` | reference-value + signal-semantics tests for the pandas indicator lib (RSI/ADX); gates M16/H11 |
 | M30 | Med | test | OPEN | | No select-on-train wiring test |
-| H13 | High | mech | DONE | `test_strategy_5b.py` | added `StrategyBase._gated_buy()`; ALL templates (+ generator + base signal-handler) enter through it, so the event gate applies to every family (was SMACrossover-only) |
+| H13 | High | mech | DONE | `test_strategy_5b.py`, `test_event_gate_wiring_5b.py` | added `StrategyBase._gated_buy()`; ALL templates (+ generator + base signal-handler) enter through it (strategy side). 5B-rev (F1) — completed the SECOND half the original H13 named: the gate config is now THREADED from the CLI through OptimizationConfig + WalkForwardConfig into the runner (symbol + event_gate + once-preloaded gates_df), so a YAML `event_gate.enabled` is honoured in real optimize/walk-forward runs (was inert in every entrypoint). Behavioral non-SMA gate tests added (F2/TI-4) + source-check now covers all 7 families incl. DynamicStrategy/Sentiment via the CALL token. NOTE: the AI research-loop executor path is NOT yet gate-wired (runs inside an async loop; needs async gate preload) — tracked as a 5B-rev follow-up below. |
 | H7 | High | mech | DONE (review) | `tests/unit/backtesting/test_finalize_trades_h7.py` | finalize_trades=True in runner.py; done early as Phase-0 worked example |
 | H8 | High | mech | DONE | `test_leakage_suite.py` | genuinely-leaky control `LeakyFuturePeek` (shift(-1) future peek) replaces the non-leaky `LeakyClosePeek`; discrimination test now asserts canary FAILs leaky / clears clean (done with M22) |
 | H11 | High | mech | DONE | `test_indicator_library_m18.py` | ADX signal now DIRECTIONAL (+DI vs −DI; SELL a strong downtrend, was BUY on every bar); DM filtered from the RAW series (tie→both zero) |
 | M13 | Med | mech | DONE | `test_strategy_5b.py` | `_gated_buy` maps a full-equity intent (>=1.0) → buy-max and a REDUCE fraction → fraction-of-equity; fixed the false size==1 comment/docstring |
-| M14 | Med | mech | DONE | `(suite)` | create_with_params rejects unknown/typo'd param names (was inert attr → ran defaults under recorded params) |
-| M15 | Med | mech | DONE | `test_strategy_5b.py` | planner keyword "breakout" → trend_following (was mean_reversion); BollingerBreakout stays under mean_reversion (what it does) |
-| M16 | Med | mech | DONE | `test_indicator_library_m18.py` | RSI zero-loss → 100 (overbought), not NaN→HOLD; a perfect uptrend now registers overbought |
+| M14 | Med | mech | DONE | `test_strategy_5b.py` | create_with_params rejects unknown/typo'd param names (was inert attr → ran defaults under recorded params). 5B-rev (M14-1): added the gating test (reject typo, accept valid+empty) + a regression guard that every registered template's own default param-set is accepted; evidence was `(suite)` = untested. |
+| M15 | Med | mech | DONE (preview-only) | `test_strategy_5b.py` | planner keyword "breakout" → trend_following (was mean_reversion); BollingerBreakout stays under mean_reversion. 5B-rev (M15-PROD-SCOPE): scope correction — `parse_goal_scope` feeds ONLY `GET /runs/preview`; the actual run path (POST /runs → run_research) selects by `strategy_families` (defaulting to all three), so the "breakout silently runs mean-reversion" harm was never realized in a live run. Fix is correct for the preview label; live strategy selection is governed by L15 (preview scope ignored by POST). |
+| M16 | Med | mech | DONE | `test_indicator_library_m18.py` | RSI zero-loss → 100 (overbought), not NaN→HOLD; a perfect uptrend now registers overbought. 5B-rev (PATH-2/TI-3): the fix originally landed only on the generator-only library `RSIIndicator`; the LIVE `MultiIndicator._compute_rsi` copy still had the bug — now fixed (+ min_periods) and directly tested. EDGE-1: guard tightened to `avg_loss==0 & avg_gain>0` so a FLAT/zero-momentum series stays NaN→HOLD instead of RSI 100→spurious SELL. |
 | M27 | Med | mech | OPEN | | regime_validated near-unreachable (needs 1B) |
-| M28 | Med | mech | DONE | `test_strategy_5b.py` | regime_failed candidates excluded from _criteria_satisfying → goal_met/validated_count no longer count failed regime ideas |
+| M28 | Med | mech | DONE (partial) | `test_strategy_5b.py` | regime_failed candidates excluded from _criteria_satisfying → goal_met/validated_count no longer count failed regime ideas. 5B-rev: ALSO fixed the secondary bug — a regime_failed idea no longer resets `consecutive_failures` (it increments it), so R4 (max_consecutive_failures) can fire on a stream of failed ideas. RESIDUAL (by design, flagged for the regime-workstream owner): `unvalidated` regime ideas STILL count toward goal_met/COMPLETED — regime mode is idea-surfacing, so tightening goal_met to `regime_validated`-only is a semantics decision, not applied unilaterally. See H19/M27. |
 | M29 | Med | mech | OPEN | | Decay retained_fraction divides by ~0 |
 | M31 | Med | mech | OPEN | | Regime candidate metrics train-slice but UI labels full window |
 | M46 | Med | mech | OPEN | | Run-level OOS descriptor over-claims "passed" |
 | M48 | Med | mech | OPEN | | Director no rule for persistent skips (zombie spin) |
 | M49 | Med | mech | OPEN | | Plateau watermark polluted by gate-failed Sharpe |
 | M52 | Med | mech | OPEN | | Create-run under-validated (mode/rigor/model/budget) |
+
+### Cluster 5B-review — adversarial-review remediation (findings on the 5B work itself)
+A 6-dimension adversarial workflow reviewed the 5B fixes and confirmed 19 issues (0 refuted→kept). The
+dominant theme repeated Phase-2/3: *the fix was correct in its component but did not reach the live path*,
+plus test-gating gaps. Fixed items are folded into the rows above (F1→H13, M10-CLI→M10, PATH-2/EDGE-1→M16,
+TI-1→M12, M14-1→M14, TI-5→M60, M11-docstring→M11, M28-secondary→M28). New/standalone items:
+| ID | Sev | Bucket | Status | Test | Note |
+|----|-----|--------|--------|------|------|
+| F3 | Low | mech | DONE | `test_strategy_5b.py` | `route_signal` SHORT entry was a raw `self.sell()` (ungated); added a symmetric `_gated_sell()` so short entries honour the gate too (latent — no shipped template opens shorts). |
+| PATH-1 | High | dec | DONE (honest-doc) | `test_indicator_library_m18.py` | The pandas indicator LIBRARY (`RSIIndicator`/`ADXIndicator`, incl. the H11/library-M16 fixes) is reachable ONLY via `generate_strategy`→`DynamicStrategy`, which has NO production caller (`use_generator` is defined in schema but read nowhere in `src/`). The H11/M16 library fixes are correct but currently affect only tests + the (unwired) generator. The LIVE RSI copy is fixed separately (M16/PATH-2). Follow-up: wire `use_generator` into `run_pipeline` OR mark the generator explicitly test-only + delete `use_generator`. |
+| F1-exec | Med | dec | OPEN (follow-up) | | Event-gate wiring covers the CLI optimize/walk-forward paths (F1). The AI research-loop `ResearchExecutor` path is NOT gate-wired: it builds `BacktestConfig` without `event_gate`, and it runs inside an async loop where the sync `_preload_gates_blocking` can't load gates. Needs an async gate preload + a request-level gate config before the research loop can honour the gate. |
+| TI-2 | Med | test | OPEN (documented) | | H19's real fix lives INLINE in `loop.py` (is_mutation computed before the prev-template update; caps keyed on the lineage ROOT). `test_budgets_5a.py` only exercises `AgentBudgetController` (which was never the bug), so it passes on pre-fix budgets and does NOT gate the loop wiring. A genuine gating test would need to drive the fully-mocked loop; deferred rather than add a brittle test. The anti-brute-force cap could silently regress. |
+| M28b | Med | dec | OPEN (owner decision) | | Regime `goal_met` still counts `unvalidated` ideas (see M28 residual). Whether to require `regime_validated` is a regime-workstream semantics call. |
 
 ---
 
