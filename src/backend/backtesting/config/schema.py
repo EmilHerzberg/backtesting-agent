@@ -28,8 +28,10 @@ class StrategyConfig(BaseModel):
     """Which strategies to evaluate."""
 
     names: list[str] = Field(default_factory=lambda: ["SMACrossover"])
-    use_generator: bool = False
-    max_indicators: int = 3
+    # NOTE: the combinatorial `generate_strategy` generator is NOT wired into `run_pipeline` (it is
+    # reachable only from the optimizer internals / tests). The former `use_generator` / `max_indicators`
+    # toggles were removed because they were inert — a YAML setting them was silently ignored. If the
+    # generator is ever wired into the CLI, reintroduce a flag that is actually consumed by run_pipeline.
 
 
 class CostsConfigYaml(BaseModel):

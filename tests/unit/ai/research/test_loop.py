@@ -290,6 +290,52 @@ class TestResearchLoop:
         assert result.phase == ResearchPhase.STOPPED
 
     @pytest.mark.asyncio
+    @pytest.mark.finding("H19")
+    async def test_per_hypothesis_budget_accumulates_on_the_stable_family_key(self):
+        # BUDGET-1 / TI-2: H19's real fix is the LOOP wiring — key the anti-brute-force cap on the stable
+        # lineage ROOT, not the fresh hyp_{uuid} the strategist mints each propose(). The controller-only
+        # tests never exercised this, so a regression back to hypothesis.hypothesis_id would go undetected.
+        # Drive the loop with a strategist that keeps proposing the SAME template (a mutation chain on one
+        # family) and assert the per-hypothesis counter ACCUMULATES (pre-fix it reset to 1 every iteration).
+        from src.backend.ai.research.budgets import (
+            AgentBudgetController,
+            BudgetExceededError,
+            BudgetLimits,
+        )
+
+        class _SpyController(AgentBudgetController):
+            def __init__(self, limits):
+                super().__init__(limits)
+                self.keys: list[str] = []
+                self.raised = 0
+
+            def check_and_consume(self, agent_id, hypothesis_id, lineage_id, is_mutation_after_failure=False):
+                self.keys.append(hypothesis_id)
+                try:
+                    super().check_and_consume(agent_id, hypothesis_id, lineage_id, is_mutation_after_failure)
+                except BudgetExceededError:
+                    self.raised += 1
+                    raise
+
+        state = _make_state(max_runs=5)
+        state.goal.target_candidates = 99          # don't stop early on goal_met
+        strategist, executor, gatekeeper, critic, data_agent = _make_mocks()
+        # Fresh hyp_{uuid} each call (like the real strategist), but the SAME proposed template.
+        strategist.propose.side_effect = lambda *a, **k: (_make_hypothesis("sma_crossover"), _make_spec())
+        spy = _SpyController(BudgetLimits())        # default cap 25 → won't trip in 5 iters
+
+        await research_loop(
+            state, strategist, executor, gatekeeper, critic, data_agent, budget_controller=spy,
+        )
+
+        assert len(spy.keys) >= 3
+        assert len(set(spy.keys)) == 1              # SAME lineage-root family key every iteration (stable)
+        hyp_uuids = {h.hypothesis_id for h in state.hypotheses}
+        assert spy.keys[0] not in hyp_uuids         # keyed on the ROOT, NOT the fresh hyp_{uuid}
+        # the per-hypothesis counter actually ACCUMULATED (pre-fix: reset to 1 each iteration → final 1)
+        assert spy._get_usage("strategist").trials_this_hypothesis >= 3
+
+    @pytest.mark.asyncio
     async def test_events_emitted(self):
         """on_event callback receives lifecycle events."""
         state = _make_state(max_runs=2)

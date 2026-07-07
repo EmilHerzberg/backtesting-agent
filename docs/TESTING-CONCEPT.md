@@ -51,8 +51,9 @@ but they are the *bottom* of this pyramid, not the organizing principle.
 4. **Cheap by default, real on demand.** The user actively watches LLM spend. The automated suite must
    run at **€0** — LLM providers are mocked and market data is a frozen snapshot. Real-provider runs are a
    separate, opt-in, budgeted **MAN** tier (§7).
-5. **Deterministic where it claims to be.** Rule-based runs with a fixed `seed` must be reproducible;
-   this is itself a test (§4.RUN).
+5. **Deterministic where it claims to be.** A fixed `seed` reproduces optimizer `best_params`
+   (enforced — `test_optimizer_5a.py`). Full run-level bit-exact reproducibility (RUN-6) is a design
+   intent, not yet enforced (see `determinism.py` NOT-YET-ENFORCED / M57–M59).
 
 ---
 
@@ -154,7 +155,7 @@ and every `goal_id`-scoped research table (assert row counts = 0). ACC-7/8 must 
 | RUN-3 | Unknown ticker marked ⚠ but still attempt-able; known ticker ✓ | P2 | E2E |
 | RUN-4 | Run progresses through phases (Strategist…Reporter); events stream; at least the pipeline advances | P0 | API, E2E |
 | RUN-5 | Run reaches a terminal state (`completed`/`stopped`) within budget; candidates and/or graveyard populated | P0 | API |
-| RUN-6 | **Determinism:** same `seed` + same config (mock/frozen data) → identical candidate hashes & metrics | P1 | UNIT, API |
+| RUN-6 | **Determinism** (NOT-YET-COVERED): same `seed` + same config → identical candidate hashes & metrics. *Design intent only* — the run-fingerprint is unwired (M57) and the golden-hash gate skips (M58); the sole enforced reproducibility today is optimizer `best_params` equality (`test_optimizer_5a.py`). | P1 | UNIT, API |
 | RUN-7 | Rule-based run cost is **€0** and no LLM call is made (mock provider asserts zero calls) | P0 | API |
 | RUN-8 | Budget cap: `max_runs`/`max_seconds` respected → Director returns `budget_exhausted`, run stops | P0 | API, UNIT |
 | RUN-9 | Zero survivors → honest empty state ("No survivors.") not an error | P1 | E2E, API |
@@ -320,8 +321,9 @@ and every `goal_id`-scoped research table (assert row counts = 0). ACC-7/8 must 
 ## 7. Test-data & environment strategy
 
 - **Ephemeral DB per test run** (temp SQLite) for API/UNIT; never touch the production volume.
-- **Frozen market data** (`BACKTEST_DETERMINISM_MODE`/golden snapshot) so backtests are bit-exact and
-  offline — required for RUN-6 determinism.
+- **Frozen market data** (`BACKTEST_DETERMINISM_MODE`/golden snapshot) removes network nondeterminism and
+  keeps backtests offline. Full *bit-exact* reproducibility is a design intent, NOT yet enforced or
+  CI-gated (see `determinism.py` NOT-YET-ENFORCED / M57–M59) — RUN-6 is not-yet-covered.
 - **Seed users/providers** via factory helpers (verified user + 1 mechanism_only + 1 risk + 1 unvalidated
   provider) to cover leakage rendering without real keys.
 - **No real API keys in the repo or CI**; the encryption key for tests is a throwaway Fernet key.
