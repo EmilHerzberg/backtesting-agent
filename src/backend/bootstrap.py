@@ -47,6 +47,13 @@ _MIGRATIONS = [
     ("research_candidates", "holdout_json", "TEXT DEFAULT '{}'"),
     ("research_runs", "train_end", "VARCHAR(20) DEFAULT ''"),
     ("research_runs", "provider_type", "VARCHAR(30) DEFAULT ''"),
+    # H31 (Phase 4B): the per-model leakage badge column. Was added to the ResearchRunDB ORM model but
+    # left out of this idempotent auto-migration list, so on a PRESERVED prod DB the column was absent
+    # after deploy and every full-entity `select(ResearchRunDB)` (GET /runs, /stats, load_report,
+    # load_run_for_state) raised "no such column: research_runs.model_id" → hard 500, while
+    # persist_snapshot silently no-op'd inside its swallow-all try/except. Adding it here auto-migrates
+    # at next boot (matching provider_type) — no manual ALTER TABLE needed.
+    ("research_runs", "model_id", "VARCHAR(60) DEFAULT ''"),
 ]
 
 
