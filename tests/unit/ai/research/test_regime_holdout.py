@@ -150,3 +150,35 @@ def test_decay_after_none_when_window_runs_to_now():
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     d = _compute_regime_decay({}, 1.0, _FakeData(), ex, "2015-01-01", today)
     assert d["before"] is not None and d["after"] is None      # no post-window data
+
+
+@pytest.mark.finding("M29")
+def test_decay_near_zero_in_regime_no_absurd_ratio():
+    # M29: a near-zero in-regime Sharpe must not yield an absurd retained_fraction. in=0.02, oor=0.5 →
+    # naive ratio = 25.0 ("2500% retained"). It must be undefined (None), with the signed delta kept.
+    ex = _FakeExec({"sharpe_annual": 0.5})
+    b = _compute_regime_decay({}, 0.02, _FakeData(), ex, "2015-01-01", "2016-06-01")["before"]
+    assert b["retained_fraction"] is None                      # pre-fix: 25.0
+    assert b["retained_delta"] == pytest.approx(0.48, abs=1e-3)   # 0.5 - 0.02 (sign/magnitude preserved)
+
+
+@pytest.mark.finding("M29")
+def test_decay_negative_in_regime_preserves_sign_via_delta():
+    ex = _FakeExec({"sharpe_annual": -0.3})
+    b = _compute_regime_decay({}, -0.5, _FakeData(), ex, "2015-01-01", "2016-06-01")["before"]
+    assert b["retained_fraction"] is None                      # base ≤ 0 → no ratio (pre-fix: None too, but…)
+    assert b["retained_delta"] == pytest.approx(0.2, abs=1e-3)   # …the delta -0.3-(-0.5) is NEW (pre-fix: KeyError)
+
+
+@pytest.mark.finding("M27")
+def test_thin_holdout_still_reports_observed_sharpe_and_t():
+    # M27: a too-thin hold-out is UNVALIDATED (not a verdict), but the observed numbers must not be dropped.
+    ex = _FakeExec({"n_trades": 10, "trade_returns": _STRONG[:10], "sharpe_annual": 1.4})
+    r = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01")
+    assert r["status"] == "unvalidated"
+    assert r["holdout_sharpe"] == pytest.approx(1.4)           # pre-fix: key absent in the too-thin branch
+    assert "holdout_t" in r                                    # 10 returns → per-trade t is defined
+    # a genuinely too-thin (<2 returns) slice still reports the Sharpe, just no t
+    ex2 = _FakeExec({"n_trades": 1, "trade_returns": [0.01], "sharpe_annual": 0.7})
+    r2 = _run_regime_holdout({}, _FakeData(), ex2, "2019-01-01", "2020-06-01")
+    assert r2["holdout_sharpe"] == pytest.approx(0.7) and "holdout_t" not in r2

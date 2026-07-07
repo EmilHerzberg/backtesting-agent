@@ -122,6 +122,7 @@ class DirectorConfig:
     plateau_eps: float = 0.05
     max_consecutive_failures: int = 12
     error_breaker: int = 5
+    skip_breaker: int = 6                # M48: rotate/stop after this many consecutive "skipped" iterations
     oos_enabled: bool = False            # AUTHORITATIVE value forced by the loop (T1)
 
     @property
@@ -164,6 +165,7 @@ class RuleBasedOrchestrator:
             "attempts_on_asset": state.attempts_on_current_asset,
             "consecutive_failures": state.consecutive_failures,
             "consecutive_errors": state.consecutive_errors,
+            "consecutive_skips": state.consecutive_skips,
             "last_outcome": last_outcome,
         }
 
@@ -181,6 +183,12 @@ class RuleBasedOrchestrator:
         # R3 — circuit breaker (errors)
         if state.consecutive_errors >= cfg.error_breaker:
             return D("next_asset", "circuit_breaker") if queue_non_empty else D("done", "circuit_breaker_last")
+        # R3b (M48) — skip breaker: a run of consecutive "skipped" iterations (the strategist keeps
+        # re-proposing an exhausted hypothesis family, every proposal blocked by the budget/dedup guard)
+        # makes zero forward progress yet spends a paid strategist call each spin. Rotate to the next asset,
+        # or stop on the last/only one, rather than spinning to the T6 iteration backstop.
+        if state.consecutive_skips >= cfg.skip_breaker:
+            return D("next_asset", "skip_breaker") if queue_non_empty else D("done", "skip_breaker_last")
         # R4 — asset exhausted (can stop the last asset)
         if (plateau(state.best_sharpe_on_asset, cfg.plateau_window, cfg.plateau_eps)
                 or state.consecutive_failures >= cfg.max_consecutive_failures):
@@ -260,6 +268,7 @@ def _downsample_curve(curve: Any, max_points: int = 120) -> list:
 MIN_HOLD_DAYS = 120          # a hold-out (or decay slice) below ~4mo can't mean anything
 VALIDATE_MIN_TRADES = 20     # P2-R4: a "validated" claim needs a non-trivial sample (independent of rigor)
 VALIDATE_T = 1.65            # P2-R4: ~95% one-sided; stricter than quick/medium selection t*
+DECAY_SHARPE_FLOOR = 0.10    # M29: below this an in-regime Sharpe is too small for an honest retained-ratio
 OOS_MIN_TRADES = VALIDATE_MIN_TRADES  # D5/H3: an OOS verdict needs a real sample, else UNEVALUATED
 
 
@@ -313,7 +322,10 @@ def _train_split(window_start: str, window_end: str) -> str | None:
     """P2 select-on-train: the ISO date splitting the regime window into train=[ws, split] +
     hold-out=[split, we]. Returns None when the window is too short to carve an honest hold-out
     (span < ~300d → the 4mo floor would exceed the 40% cap, P2-R2) — no split, stays UNVALIDATED
-    (P2-5). ``h`` is set from window LENGTH only; the per-strategy floor handles trade frequency."""
+    (P2-5). The split is set from window LENGTH only. NOTE (M27): the hold-out then requires a FIXED
+    ``VALIDATE_MIN_TRADES`` (20) to certify — there is no per-strategy trade-frequency floor here, so on a
+    short slice ``regime_validated`` is hard to reach for low-frequency templates (scaling that bar to the
+    slice length is a deferred regime-semantics decision; the observed hold-out Sharpe/t are always reported)."""
     span = _days(window_start, window_end)
     if span <= 0 or 0.40 * span < MIN_HOLD_DAYS:      # too short to validate honestly
         return None
@@ -370,8 +382,18 @@ def _slice_edge(spec, data_agent, executor, start, end, in_regime_sharpe) -> dic
         oor_sharpe = float(m.get("sharpe_annual", 0.0))
     except Exception as exc:
         return {"note": "decay backtest failed", "error": str(exc), "period": [start, end]}
-    retained = round(oor_sharpe / in_regime_sharpe, 3) if in_regime_sharpe > 0 else None
-    return {"out_of_regime_sharpe": round(oor_sharpe, 3), "retained_fraction": retained, "period": [start, end]}
+    # M29: `retained` is a ratio, so it blows up as the denominator → 0. Regime mode uses SOFT quality
+    # gates (it never hard-fails a low-Sharpe idea), so an in-regime Sharpe of ~0.02 is routine — and
+    # `0.5 / 0.02 = 25.0` renders as "2500% retained", self-deception the model-honesty principle forbids.
+    # Only compute the ratio above a floor (and clamp it), and ALWAYS emit the signed delta, which stays
+    # meaningful (and preserves sign) when the ratio is undefined — recovering the dropped negative-edge info.
+    delta = round(oor_sharpe - in_regime_sharpe, 3)
+    if in_regime_sharpe >= DECAY_SHARPE_FLOOR:
+        retained = max(-2.0, min(2.0, round(oor_sharpe / in_regime_sharpe, 3)))
+    else:
+        retained = None                            # base too small (or non-positive) for an honest ratio
+    return {"out_of_regime_sharpe": round(oor_sharpe, 3), "retained_fraction": retained,
+            "retained_delta": delta, "period": [start, end]}
 
 
 def _compute_regime_decay(spec, in_regime_sharpe, data_agent, executor, window_start, window_end) -> dict:
@@ -431,9 +453,17 @@ def _run_regime_holdout(spec, data_agent, executor, train_end, window_end, *,
     n = int(m.get("n_trades", 0))
     tr = m.get("trade_returns") or []            # executor.run returns trade_returns (executor.py:109)
     if n < VALIDATE_MIN_TRADES or len(tr) < 2:   # too thin to VALIDATE (P2-R4) — unvalidatable, NOT a failure
-        return {"status": "unvalidated",
+        # M27: still surface the OBSERVED hold-out numbers (Sharpe always; the per-trade t when ≥2 returns
+        # make it defined) so the honest "here's what we measured, just not enough to certify" evidence is
+        # never dropped — instead of reporting only the trade count.
+        _obs = {"status": "unvalidated",
                 "reason": f"hold-out too thin to validate ({n} < {VALIDATE_MIN_TRADES} trades)",
-                "holdout_period": [train_end, window_end], "holdout_trades": n}
+                "holdout_period": [train_end, window_end], "holdout_trades": n,
+                "holdout_sharpe": round(float(m.get("sharpe_annual", 0.0)), 3)}
+        if len(tr) >= 2:
+            from src.backend.backtesting.gates.basic_gates import per_trade_t
+            _obs["holdout_t"] = round(float(per_trade_t(tr)), 3)
+        return _obs
     from src.backend.backtesting.gates.basic_gates import per_trade_t
     t = per_trade_t(tr)                          # shared helper — same math as the activity gate
     passed = t >= t_star                          # positive + significant at the (reuse-corrected) bar
@@ -1010,11 +1040,18 @@ async def research_loop(
         # ── Post-trial bookkeeping (only for trials that produced metrics) ──
         if outcome in ("gate_fail", "critic_reject", "candidate"):
             state.consecutive_errors = 0
-            state.best_sharpe_on_asset.append(
-                max(sharpe, state.best_sharpe_on_asset[-1]) if state.best_sharpe_on_asset else sharpe)
+        # M48: track consecutive "skipped" iterations (persistent budget/dedup skips make no progress and
+        # reset no other counter) so the Director can rotate/stop a zombie spin.
+        state.consecutive_skips = state.consecutive_skips + 1 if outcome == "skipped" else 0
 
         if outcome == "candidate":
             state.candidates.append(candidate)
+            # M49: the plateau watermark must track CANDIDATE quality, not the raw in-sample Sharpe of
+            # gate-FAILED / critic-REJECTED trials — one overfit high-Sharpe reject (huge Sharpe on too few
+            # trades → gate fail) would otherwise pin the watermark high and make R4 abandon a still-
+            # productive asset. Only an accepted candidate advances it.
+            state.best_sharpe_on_asset.append(
+                max(sharpe, state.best_sharpe_on_asset[-1]) if state.best_sharpe_on_asset else sharpe)
             # M28: a regime idea that FAILED its within-regime hold-out is still *surfaced* (appended) but
             # is NOT a success — it must not reset the consecutive-failure breaker, otherwise a stream of
             # regime_failed ideas would keep R4 (max_consecutive_failures) from ever firing and the loop
