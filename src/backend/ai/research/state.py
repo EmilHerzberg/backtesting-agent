@@ -55,6 +55,10 @@ class Budget:
     max_seconds: int = 3600
     used_runs: int = 0
     used_eur: float = 0.0
+    # M44: False once any LLM call used a model with UNKNOWN pricing. Then used_eur is a LOWER BOUND (the
+    # unpriced calls contributed no €), so the HUD/report must show "cost unknown" rather than presenting
+    # €0.0000 as if it were a genuinely-free run — and the € cap cannot be trusted to bind.
+    cost_known: bool = True
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def remaining_runs(self) -> int:

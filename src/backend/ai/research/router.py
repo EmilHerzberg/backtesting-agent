@@ -130,6 +130,9 @@ class ResearchStateResponse(BaseModel):
     # A-3 (ATSX-11): run-level lifecycle + budget/time/lineage for the HUD.
     status: str = "running"
     used_eur: float = 0.0
+    # M44: False when the run used any model with unknown pricing → used_eur is a lower bound, not a true
+    # €0. The HUD should render "cost unknown" instead of "€0.0000" (which would read as genuinely free).
+    cost_known: bool = True
     agent_mode: str = "rule_based"   # W4 (F-5): the effective mode the run executed
     mode: str = "robustness"         # P1: robustness | regime
     window_start: str = ""           # P1: effective backtest window
@@ -597,6 +600,7 @@ async def get_run_state(
             error_message=state.error_message or rec.error,
             status=rec.status,
             used_eur=float(state.budget.used_eur),
+            cost_known=bool(getattr(state.budget, "cost_known", True)),   # M44
             agent_mode=getattr(state, "agent_mode", "rule_based"),   # W4 F-5
             mode=getattr(state, "mode", "robustness"),               # P1
             window_start=getattr(state, "window_start", ""),

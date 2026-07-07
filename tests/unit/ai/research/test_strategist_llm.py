@@ -3,6 +3,8 @@
 import json
 from unittest.mock import AsyncMock
 
+import pytest
+
 from src.backend.ai.models import ChatResponse, TokenUsage
 from src.backend.ai.research.agent_llm import LLMHandle, TokenLedger
 from src.backend.ai.research.state import Budget, FailureContext
@@ -114,6 +116,38 @@ async def test_out_of_bounds_clamped():
     prov.chat_completion.return_value = _resp({"template_id": TID, "params": huge})
     _, spec = await strat.propose("AAPL", [FAM], [], {})
     _in_bounds(spec["params"])                              # clamped into range
+
+
+@pytest.mark.finding("M38")
+async def test_majority_invented_params_fall_back_to_rule_based():
+    # M38: when the system invents MORE THAN HALF the params, the LLM's stored rationale can't honestly
+    # describe the executed spec → fall back to rule-based rather than run invented params under the LLM
+    # narrative. The nearest prior test (test_out_of_bounds_clamped) only asserted _in_bounds, which the
+    # rule-based fallback params ALSO satisfy, so it never gated this threshold.
+    if len(SPACE) < 2:
+        pytest.skip("template has <2 params — the >half threshold is degenerate")
+    strat, prov, _, _ = _strat()
+    prov.chat_completion.return_value = _resp({"template_id": TID, "params": {}})   # ALL midpoint-filled
+    hyp, _ = await strat.propose("AAPL", [FAM], [], {})
+    assert hyp.author == "rule_based_strategist"           # pre-fix: ran the fully-invented spec as "llm"
+
+    prov.chat_completion.return_value = _resp({"template_id": TID, "params": "not-a-dict"})
+    hyp2, _ = await strat.propose("AAPL", [FAM], [], {})
+    assert hyp2.author == "rule_based_strategist"          # non-dict params → all invented → fallback
+
+
+@pytest.mark.finding("M38")
+async def test_one_invented_param_stays_llm_and_records_provenance():
+    if len(SPACE) < 2:
+        pytest.skip("template has <2 params")
+    strat, prov, _, _ = _strat()
+    one_missing = _params_at(0.5)
+    dropped = next(iter(SPACE))
+    del one_missing[dropped]                               # exactly ONE param invented (midpoint-filled)
+    prov.chat_completion.return_value = _resp({"template_id": TID, "params": one_missing})
+    hyp, spec = await strat.propose("AAPL", [FAM], [], {})
+    assert hyp.author == "llm_strategist"                  # ≤half invented → still trusts the LLM narrative
+    assert any(dropped in r and "midpoint" in r for r in spec["repaired"])   # M38 provenance recorded
 
 
 async def test_unknown_template_falls_back():
