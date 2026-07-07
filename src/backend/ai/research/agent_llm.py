@@ -135,7 +135,10 @@ class TokenLedger:
         if llm.input_price_per_m is None or llm.output_price_per_m is None:
             # M44: pricing unknown — record the tokens but do NOT fabricate €0. cost_eur/used_eur stay
             # honest (the HUD should show "unknown (N tokens)"); the € cap genuinely cannot bind here.
+            # Propagate onto the Budget so the flag OUTLIVES this (discarded) ledger and reaches the
+            # ResearchState → API/report surface (the ledger itself is a per-run local).
             self.cost_known = False
+            self.budget.cost_known = False
             return
         cost = (
             llm.input_price_per_m * usage.prompt_tokens

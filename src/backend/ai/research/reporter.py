@@ -25,7 +25,10 @@ _NUMERIC_PATTERNS = [
 # (starts with a letter/underscore, then word chars/dots) — NOT arbitrary {{...}} content. The old
 # `\{\{[^}]+\}\}` stripped any double-braced text before scanning, so an LLM emitting `{{1.2}}` (or
 # `{{Sharpe was 1.2}}`) shipped digits straight past the digit-free-report guarantee.
-_TEMPLATE_VAR = re.compile(r"\{\{[a-zA-Z_][a-zA-Z0-9_.]*\}\}")
+# H28 residual (Phase-4 review): the carve-out is DIGIT-FREE — the real report bindings (metrics.sharpe,
+# benchmark.buy_hold_return, …) contain no digits, so allowing digits after the first char let
+# identifier-shaped-but-digit-bearing tokens ({{x2}}, {{year2020}}, {{sharpe_252}}) slip past the scan.
+_TEMPLATE_VAR = re.compile(r"\{\{[a-zA-Z_][a-zA-Z_.]*\}\}")
 
 
 class NumericClaimError(Exception):

@@ -20,9 +20,9 @@ def test_effective_commission_matches_cli_formula():
     # 0.1% commission + 2.5 bps half-spread + 2 bps slippage = 14.5 bps/side.
     assert effective_commission_pct(0.001, 5.0, 2.0) == pytest.approx(0.00145)
     assert effective_commission_pct() == pytest.approx(0.00145)          # realistic default
-    # Equals the CLI's inline formula for arbitrary inputs.
-    c, s, sl = 0.0005, 8.0, 3.0
-    assert effective_commission_pct(c, s, sl) == pytest.approx(c + s / 10_000 / 2 + sl / 10_000)
+    # Independent hardcoded expectation (NOT the function body re-derived): 0.0005 + 8bps/2 + 3bps
+    # = 0.0005 + 0.0004 + 0.0003 = 0.0012. (The CLI calls this same helper — no separate inline formula.)
+    assert effective_commission_pct(0.0005, 8.0, 3.0) == pytest.approx(0.0012)
 
 
 class _CaptureExec:

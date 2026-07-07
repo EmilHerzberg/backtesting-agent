@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -290,31 +291,46 @@ class AdversarialCritic:
         Checks per spec Part 5: overfitting, regime dependence, pure beta,
         cost fragility, sample size, leakage smell.
         """
-        weaknesses = []
-        sharpe = metrics.get("sharpe_annual", 0.0)
-        n_trades = metrics.get("n_trades", 0)
-        total_return = metrics.get("total_return", 0.0)
-        max_dd = metrics.get("max_drawdown", 0.0)
+        # F3: metrics.get(k, default) returns None when a key is PRESENT-but-None (the default only fills
+        # absent keys), and a NaN would silently bypass the M40 losing-strategy guard (NaN <= 0 is False).
+        # Coerce every metric the comparisons below touch to a finite float so a degenerate/None/NaN value
+        # can neither crash the critic nor slip past the guards.
+        def _num(x: Any) -> float:
+            try:
+                v = float(x)
+            except (TypeError, ValueError):
+                return 0.0
+            return v if math.isfinite(v) else 0.0
+
+        # ``weaknesses`` = genuine concerns that can escalate the verdict; ``caveats`` = informational
+        # notes the GATE already vetted (H26) which must never, on their own, drive an investigate/reject.
+        weaknesses: list[str] = []
+        caveats: list[str] = []
+        sharpe = _num(metrics.get("sharpe_annual", 0.0))
+        n_trades = int(_num(metrics.get("n_trades", 0)))
+        total_return = _num(metrics.get("total_return", 0.0))
+        max_dd = _num(metrics.get("max_drawdown", 0.0))
 
         # Benchmark comparison (try nested then flat).
         benchmark = metrics.get("benchmark", {})
-        bh_return = benchmark.get("buy_hold_return", metrics.get("buy_hold_return", 0.0))
+        bh_return = _num(benchmark.get("buy_hold_return", metrics.get("buy_hold_return", 0.0)))
 
         # 1. OVERFITTING: suspiciously precise params + high Sharpe + low trades
-        # H26: the smart-activity gate ALREADY vetted trade count against the CALIBRATED floor (5–8,
-        # observed median ~12) with a per-trade t-stat before the critic runs. The old hardcoded 30 →
-        # "insufficient" here re-rejected most gate-passing candidates (the word "insufficient" escalates
-        # to reject below), silently overriding the calibration. Keep only a NON-critical caveat for a
-        # genuinely thin sample; the reject decision on trade count belongs to the gate, not the critic.
+        # H26/F1: the smart-activity gate ALREADY vetted trade count against the CALIBRATED floor (5–8,
+        # observed median ~12) with a per-trade t-stat before the critic runs. A thin sample is therefore a
+        # non-blocking CAVEAT — NOT a weakness. Previously it was appended to ``weaknesses``, so a clean
+        # gate-passing candidate whose ONLY note was the thin count got recommendation="investigate", which
+        # the robustness loop treats as a terminal kill — silently re-rejecting the *median* gate-passing
+        # candidate on trade count, exactly the calibration override H26 was meant to stop.
         if n_trades < 20:
-            weaknesses.append(f"Modest trade count ({n_trades}) — treat per-trade statistics with caution")
+            caveats.append(f"Modest trade count ({n_trades}) — treat per-trade statistics with caution")
         if sharpe > 3.0:
             weaknesses.append(f"Suspiciously high Sharpe ({sharpe:.2f}) — likely overfit")
 
         # 2. REGIME DEPENDENCE: check if performance concentrates in one regime
         regime = metrics.get("regime_analysis", {})
         if regime:
-            regime_sharpes = [r.get("sharpe", 0) for r in regime.values() if isinstance(r, dict)]
+            regime_sharpes = [_num(r.get("sharpe", 0)) for r in regime.values() if isinstance(r, dict)]
             if len(regime_sharpes) >= 2:
                 pos_regimes = sum(1 for s in regime_sharpes if s > 0)
                 if pos_regimes <= 1 and len(regime_sharpes) >= 3:
@@ -347,31 +363,44 @@ class AdversarialCritic:
         if max_dd < -0.30:
             weaknesses.append(f"Severe max drawdown ({max_dd:.1%})")
 
-        # Determine recommendation. M40: a losing strategy ("critical failure") is now a reject.
-        critical = any("insufficient" in w.lower() or "overfit" in w.lower() or "critical failure" in w.lower()
-                       for w in weaknesses)
-        if critical:
+        # Determine recommendation. M40: a losing strategy ("critical failure") is now a reject. F2: the
+        # `critical` test is any()-over-all, but the reject reasoning used to quote weaknesses[0] — and the
+        # thin-trade note was appended first, so a reject was mislabeled "Modest trade count…" (poisoning
+        # the M37 critic_note the strategist reads). Quote the FIRST weakness that actually matched the
+        # critical keyword set, and surface caveats alongside the concerns (informational, verdict-neutral).
+        def _is_critical(w: str) -> bool:
+            wl = w.lower()
+            return "insufficient" in wl or "overfit" in wl or "critical failure" in wl
+
+        critical_weaknesses = [w for w in weaknesses if _is_critical(w)]
+        all_findings = weaknesses + caveats   # caveats still shown to the user, just don't drive the verdict
+        if critical_weaknesses:
             return {
-                "weaknesses": weaknesses,
+                "weaknesses": all_findings,
                 "confidence": "medium",
                 "recommendation": "reject",
-                "reasoning": f"Critical weakness found: {weaknesses[0]}",
+                "reasoning": f"Critical weakness found: {critical_weaknesses[0]}",  # F2: the REAL cause
                 "source": "heuristic",   # M39: this critique came from the rule-based fallback, not the LLM
             }
         elif weaknesses:
             return {
-                "weaknesses": weaknesses,
+                "weaknesses": all_findings,
                 "confidence": "low",
                 "recommendation": "investigate",
-                "reasoning": f"{len(weaknesses)} concern(s) found but none critical",
+                "reasoning": f"Non-critical concern: {weaknesses[0]}",   # F2: substance, not a bare count
                 "source": "heuristic",   # M39
             }
         else:
+            # Only caveats (or nothing): the gate-vetted thin-sample note must NOT block — recommend accept,
+            # but a thin sample can't ride at "high" confidence.
             confidence = "high" if n_trades >= 100 and sharpe > 0.5 else "medium"
+            if caveats and confidence == "high":
+                confidence = "medium"
             return {
-                "weaknesses": [],
+                "weaknesses": all_findings,   # e.g. the thin-trade caveat, surfaced as a candidate weakness
                 "confidence": confidence,
                 "recommendation": "accept",
-                "reasoning": "No critical weaknesses found",
+                "reasoning": "No critical weaknesses found" if not caveats
+                             else f"Accepted with caveat: {caveats[0]}",
                 "source": "heuristic",   # M39
             }

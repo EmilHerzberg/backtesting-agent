@@ -53,3 +53,19 @@ def test_ledger_free_model_is_zero_not_unknown():
     led.record(SimpleNamespace(prompt_tokens=1_000, completion_tokens=1_000), _handle(0.0, 0.0))
     assert led.cost_known is True                    # 0.0 is a KNOWN (free) price, not unknown
     assert led.cost_eur == 0.0
+
+
+@pytest.mark.finding("M44")
+def test_unknown_pricing_propagates_onto_the_budget_for_the_surface():
+    # Phase-4 review: the flag lived ONLY on the discarded ledger and reached no run artifact, so the HUD
+    # showed €0.0000 for an unpriced model — indistinguishable from a genuinely-free one. It now
+    # propagates onto the Budget, which ResearchState → the /state API response (cost_known) surfaces.
+    from src.backend.ai.research.state import Budget
+
+    b = Budget(max_eur=10.0)
+    TokenLedger(budget=b).record(SimpleNamespace(prompt_tokens=1_000, completion_tokens=1_000), _handle(None, None))
+    assert b.cost_known is False and b.used_eur == 0.0    # unknown cost, NOT a real €0
+
+    b_free = Budget(max_eur=10.0)
+    TokenLedger(budget=b_free).record(SimpleNamespace(prompt_tokens=1_000, completion_tokens=1_000), _handle(0.0, 0.0))
+    assert b_free.cost_known is True                      # genuinely-free stays "known"
