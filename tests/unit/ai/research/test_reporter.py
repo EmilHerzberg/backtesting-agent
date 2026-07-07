@@ -39,6 +39,16 @@ class TestNumericTokenScan:
         # a real binding is still allowed through
         assert scan_for_numeric_claims("{{metrics.sharpe}}") == []
 
+    @pytest.mark.finding("H28")
+    def test_identifier_shaped_tokens_embedding_digits_are_still_scanned(self):
+        # H28 residual (Phase-4 review): the carve-out permitted digits AFTER the first char, so
+        # identifier-shaped-but-digit-bearing tokens slipped past the scan. The real bindings are
+        # digit-free, so these must be caught.
+        for token in ("{{x2}}", "{{year2020}}", "{{sharpe_252}}", "{{a}}{{b2}}"):
+            assert scan_for_numeric_claims(token), token   # pre-fix: [] (carved out)
+        # genuine digit-free bindings still pass untouched
+        assert scan_for_numeric_claims("{{benchmark.buy_hold_return}} and {{metrics.sharpe}}") == []
+
     def test_clean_text_passes(self):
         found = scan_for_numeric_claims(
             "The strategy shows strong momentum characteristics with "
