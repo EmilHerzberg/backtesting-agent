@@ -278,6 +278,10 @@ def _descriptors(state: ResearchState) -> dict:
         # an uncomputable buy-and-hold to the float 0.0 (indistinguishable from a genuinely-flat benchmark),
         # so we key on the explicit `benchmark_available` flag (set by the executor when >1 return bar
         # existed), not on the 0.0 sentinel; `_bh is None` covers the reload/empty-dict path too.
+        # HONEST SCOPE (re-review M46-1): for a candidate that CLEARED the gates the benchmark is in practice
+        # always computable (the min-activity HARD floor forces ≥5 trades → a multi-bar equity curve), so the
+        # `benchmark_available` branch is defensive; the reachable "unavailable" path is the empty-dict/reload
+        # (`_bh is None`) case. Kept because it is honest and harmless.
         _bm = b.benchmark or {}
         _bh = _bm.get("buy_hold_return")
         if _bh is None or not _bm.get("benchmark_available", True):
