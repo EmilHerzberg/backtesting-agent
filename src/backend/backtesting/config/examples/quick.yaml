@@ -13,7 +13,6 @@ time:
 strategy:
   names:
     - SMACrossover
-  use_generator: false
 
 costs:
   commission_pct: 0.001

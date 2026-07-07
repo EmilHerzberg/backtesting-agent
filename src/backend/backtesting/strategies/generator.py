@@ -1,4 +1,12 @@
-"""Combinatorial strategy generator using Optuna for dynamic indicator selection."""
+"""Combinatorial strategy generator using Optuna for dynamic indicator selection.
+
+STATUS — EXPERIMENTAL / NOT WIRED INTO THE SHIPPING PATH (PATH-1). ``generate_strategy`` has NO
+production caller: the CLI ``run_pipeline`` resolves strategies solely from the hand-written
+``_STRATEGY_MAP`` (by name), and the AI-research path uses its own template registry — neither invokes
+this generator. It is currently reachable only from tests. The M17 fixed-categorical fix below is
+therefore correct-but-latent. To ship it, wire ``run_pipeline`` to branch here behind a config flag that
+is actually consumed (the former inert ``StrategyConfig.use_generator`` toggle was removed).
+"""
 
 from __future__ import annotations
 
@@ -6,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+import optuna
 import pandas as pd
 from backtesting import Strategy
 
@@ -113,6 +122,16 @@ def generate_strategy(
 
         indicator_configs.append({"name": name, "params": params})
         weights.append(trial.suggest_float(f"weight_{i}", 0.1, 1.0))
+
+    # M17-EDGE: the post-hoc dedup/conflict `continue` above can leave FEWER than min_indicators (a trial
+    # that drew n_indicators=2 but picked the same or a conflicting indicator at both slots). Prune such a
+    # trial rather than silently returning an under-sized strategy that violates the min_indicators
+    # contract. (Latent with the default config=None → min_indicators=1, where slot 0 already guarantees
+    # one; matters only when a caller supplies min_indicators>1.)
+    if len(chosen_names) < config.min_indicators:
+        raise optuna.TrialPruned(
+            f"only {len(chosen_names)} compatible indicators after dedup (< min {config.min_indicators})"
+        )
 
     buy_threshold = trial.suggest_float("buy_threshold", 0.1, 0.8)
     sell_threshold = trial.suggest_float("sell_threshold", -0.8, -0.1)

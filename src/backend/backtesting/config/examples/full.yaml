@@ -36,7 +36,6 @@ strategy:
     - BollingerBreakout
     - MACDSignalCross
     - MultiIndicator
-  use_generator: false
 
 costs:
   commission_pct: 0.001

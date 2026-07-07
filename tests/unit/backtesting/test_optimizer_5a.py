@@ -83,9 +83,37 @@ def test_generate_strategy_survives_multiple_optuna_trials():
         generate_strategy(trial, max_indicators=3)   # builds the dynamic multi-indicator space
         return 0.0
 
-    study = optuna.create_study()
-    study.optimize(objective, n_trials=5)            # pre-fix: trial 2 raised "dynamic value space"
-    assert len(study.trials) == 5
+    # M17-TEST-NONDET: seed the sampler so the multi-indicator trials (which triggered the pre-fix
+    # "CategoricalDistribution does not support dynamic value space" crash) are drawn deterministically —
+    # the gate no longer depends on the RNG happening to produce >=2 differing picks.
+    study = optuna.create_study(sampler=optuna.samplers.TPESampler(seed=0))
+    study.optimize(objective, n_trials=8)            # pre-fix: a later trial raised "dynamic value space"
+    assert len(study.trials) == 8
+
+
+@pytest.mark.finding("M17")
+def test_generate_strategy_prunes_when_dedup_drops_below_min_indicators():
+    # M17-EDGE: if the post-hoc dedup/conflict pruning leaves fewer than min_indicators, the trial must be
+    # PRUNED (not silently return an under-sized strategy). Force both slots to pick the SAME indicator.
+    import optuna
+
+    from src.backend.backtesting.strategies.generator import SearchSpaceConfig, generate_strategy
+
+    class _DupTrial:
+        number = 0
+
+        def suggest_int(self, name, low, high, **_kw):
+            return 2 if name == "n_indicators" else low
+
+        def suggest_categorical(self, name, choices, **_kw):
+            return choices[0]                     # every slot picks the first indicator → duplicates
+
+        def suggest_float(self, name, low, high, **_kw):
+            return (low + high) / 2
+
+    cfg = SearchSpaceConfig(min_indicators=2, max_indicators=3)
+    with pytest.raises(optuna.TrialPruned):        # 2 slots, both dedup to 1 < min 2 → pruned
+        generate_strategy(_DupTrial(), config=cfg)
 
 
 @pytest.mark.finding("M8")
