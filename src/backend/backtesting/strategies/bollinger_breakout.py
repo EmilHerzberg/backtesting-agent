@@ -80,9 +80,9 @@ class BollingerBreakout(StrategyBase):
                 # F-018 fix: optional hard stop-loss below entry
                 if self.stop_loss_pct and self.stop_loss_pct > 0:
                     sl_price = price * (1.0 - float(self.stop_loss_pct))
-                    self.buy(sl=sl_price)
+                    self._gated_buy(sl=sl_price)   # H13: through the event gate (no-op when unconfigured)
                 else:
-                    self.buy()
+                    self._gated_buy()
         elif crossover(self.data.Close, self.upper):
             # Price crossed above upper band -- sell
             if self.position:

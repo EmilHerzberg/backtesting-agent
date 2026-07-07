@@ -167,6 +167,6 @@ class SentimentAwareReboundStrategy(StrategyBase):
         if self.block_bearish_regime and regime == "BEARISH":
             return
 
-        self.buy()
+        self._gated_buy()   # H13: through the event gate (no-op when unconfigured)
         self._entry_bar = i
         self._entry_price = price

@@ -73,7 +73,7 @@ class MACDSignalCross(StrategyBase):
     def next(self) -> None:
         if crossover(self.macd, self.signal):
             if not self.position:
-                self.buy()
+                self._gated_buy()   # H13: through the event gate (no-op when unconfigured)
         elif crossover(self.signal, self.macd):
             if self.position:
                 self.position.close()

@@ -101,7 +101,7 @@ class RSIMeanReversion(StrategyBase):
     def next(self) -> None:
         if self.rsi[-1] < self.buy_threshold:
             if not self.position:
-                self.buy()
+                self._gated_buy()   # H13: through the event gate (no-op when unconfigured)
         elif self.rsi[-1] > self.sell_threshold:
             if self.position:
                 self.position.close()

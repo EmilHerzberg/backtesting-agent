@@ -170,7 +170,7 @@
 | M44 | Med | mech | DONE | `test_llm_infra_4b.py` | pricing carried as `float\|None`; ledger `cost_known=False` + no fabricated €0 for unpriced models |
 | M45 | Med | mech | DONE | (code) | `is not None` pricing check so `Decimal("0")` free models serve 0 (not null/unknown) |
 | M56 | Med | mech | OPEN | | provider_leakage optimistic precedence (compounds H31) |
-| M60 | Med | mech | OPEN | | Regime labels from strategy equity, not market. Found by 5. |
+| M60 | Med | mech | DONE | `test_strategy_5b.py` | `_compute_regime_analysis` labels bull/bear/sideways from the ASSET (market) close-to-close returns; strategy per-window return/Sharpe reported separately. Found by 5. |
 
 ---
 
@@ -196,11 +196,11 @@
 |----|-----|--------|--------|------|------|
 | M18 | Med | test | DONE | `test_indicator_library_m18.py` | reference-value + signal-semantics tests for the pandas indicator lib (RSI/ADX); gates M16/H11 |
 | M30 | Med | test | OPEN | | No select-on-train wiring test |
-| H13 | High | mech | OPEN | | Event gate honored only by SMACrossover |
+| H13 | High | mech | DONE | `test_strategy_5b.py` | added `StrategyBase._gated_buy()`; ALL templates (+ generator + base signal-handler) enter through it, so the event gate applies to every family (was SMACrossover-only) |
 | H7 | High | mech | DONE (review) | `tests/unit/backtesting/test_finalize_trades_h7.py` | finalize_trades=True in runner.py; done early as Phase-0 worked example |
 | H8 | High | mech | DONE | `test_leakage_suite.py` | genuinely-leaky control `LeakyFuturePeek` (shift(-1) future peek) replaces the non-leaky `LeakyClosePeek`; discrimination test now asserts canary FAILs leaky / clears clean (done with M22) |
 | H11 | High | mech | DONE | `test_indicator_library_m18.py` | ADX signal now DIRECTIONAL (+DI vs −DI; SELL a strong downtrend, was BUY on every bar); DM filtered from the RAW series (tie→both zero) |
-| M13 | Med | mech | OPEN | | size=1.0 buys one share, inverts gate semantics |
+| M13 | Med | mech | DONE | `test_strategy_5b.py` | `_gated_buy` maps a full-equity intent (>=1.0) → buy-max and a REDUCE fraction → fraction-of-equity; fixed the false size==1 comment/docstring |
 | M14 | Med | mech | DONE | `(suite)` | create_with_params rejects unknown/typo'd param names (was inert attr → ran defaults under recorded params) |
 | M15 | Med | mech | DONE | `test_strategy_5b.py` | planner keyword "breakout" → trend_following (was mean_reversion); BollingerBreakout stays under mean_reversion (what it does) |
 | M16 | Med | mech | DONE | `test_indicator_library_m18.py` | RSI zero-loss → 100 (overbought), not NaN→HOLD; a perfect uptrend now registers overbought |

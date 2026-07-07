@@ -84,7 +84,7 @@ class MultiIndicator(StrategyBase):
         if not self.position:
             # Buy when RSI is oversold AND price is above SMA (uptrend)
             if rsi_val < self.rsi_buy and price > sma_val:
-                self.buy()
+                self._gated_buy()   # H13: through the event gate (no-op when unconfigured)
         else:
             # Sell when RSI is overbought OR price falls below SMA
             if rsi_val > self.rsi_sell or price < sma_val:
