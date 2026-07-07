@@ -88,6 +88,40 @@ def test_critic_will_not_accept_without_benchmark():
     assert any("benchmark" in w.lower() for w in r["weaknesses"])
 
 
+@pytest.mark.finding("H26")
+def test_gate_passed_thin_sample_is_accepted_not_investigated():
+    # F1 (Phase-4 review): the PRIOR test only asserted != "reject", but a clean thin-sample candidate
+    # returned "investigate", which the robustness loop treats as a TERMINAL kill — so the median
+    # gate-passing candidate (~12 trades) was still killed on trade count. The thin count is now a
+    # verdict-neutral caveat, so a clean candidate is ACCEPTED (with the caveat surfaced as a weakness).
+    r = AdversarialCritic()._heuristic_review({}, _metrics(n_trades=12), {})
+    assert r["recommendation"] == "accept"                       # pre-fix: "investigate" → loop kill
+    assert any("trade count" in w.lower() for w in r["weaknesses"])   # …but the caveat is still shown
+
+
+@pytest.mark.finding("H26")
+def test_reject_reasoning_names_the_real_critical_cause_not_the_thin_caveat():
+    # F2: `critical` is any()-over-all but the reasoning used to quote weaknesses[0]; the thin-trade note
+    # was appended first, so a reject on overfit/losing was mislabeled "Modest trade count…" — poisoning
+    # the M37 critic_note fed to the strategist.
+    overfit = AdversarialCritic()._heuristic_review({}, _metrics(sharpe_annual=5.0, n_trades=12), {})
+    assert overfit["recommendation"] == "reject"
+    assert "overfit" in overfit["reasoning"].lower() and "trade count" not in overfit["reasoning"].lower()
+
+    losing = AdversarialCritic()._heuristic_review({}, _metrics(total_return=-0.05, n_trades=12), {})
+    assert losing["recommendation"] == "reject"
+    assert "trade count" not in losing["reasoning"].lower()   # names the losing return, not the caveat
+
+
+@pytest.mark.finding("M40")
+def test_critic_tolerates_none_and_nan_metrics():
+    # F3: metrics.get returns None for a present-but-None key, and a NaN return silently passed the M40
+    # losing-strategy guard (NaN <= 0 is False). Coercion means None can't crash and NaN is flagged.
+    AdversarialCritic()._heuristic_review({}, _metrics(sharpe_annual=None, total_return=None), {})  # no crash
+    nan = AdversarialCritic()._heuristic_review({}, _metrics(total_return=float("nan"), n_trades=50), {})
+    assert nan["recommendation"] == "reject"                  # NaN return coerced to 0.0 → losing/critical
+
+
 @pytest.mark.finding("M39")
 def test_heuristic_critique_is_stamped_source():
     r = AdversarialCritic()._heuristic_review({}, _metrics(), {})
