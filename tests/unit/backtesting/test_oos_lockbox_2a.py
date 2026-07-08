@@ -4,6 +4,9 @@ Review findings (docs/reviews/QUANT-REVIEW-2026-07-03.md):
   H3  — OOS PASS was sign-only (`sharpe_annual > 0 and total_return > 0`): a single lucky trade
         promoted a strategy. D5 replaces it with a real sample + per-trade significance (t ≥ 1.65)
         + positive excess over buy-and-hold; a thin sample is UNEVALUATED, not FAIL.
+  R5  — valconf: the D5 trade bar was a FIXED 20, unreachable for slow strategies over the OOS window.
+        `_oos_verdict` now scales the bar to the IS tempo × the OOS length (floor OOS_FLOOR), and a
+        sub-bar sample that only has per-BAR daily evidence stays UNEVALUATED (per-bar never PASSes, R6).
   H14 — budget was keyed on the per-iteration lineage, so every mutated child got its own fresh
         3-evaluation allowance. It must be rooted on the lineage ROOT (one family allowance).
   H15 — the OOS window end was the hardcoded literal "2025-12-31", silently going stale. It must
@@ -57,7 +60,7 @@ def test_thin_sample_is_unevaluated_not_fail():
 @pytest.mark.finding("H3")
 def test_significant_edge_beating_buy_hold_passes():
     m = {"n_trades": 30, "trade_returns": _significant_returns(30),
-         "total_return": 0.50, "buy_hold_return": 0.10}
+         "total_return": 0.50, "buy_hold_return": 0.10, "sharpe_annual": 1.5}
     assert _oos_verdict(m) is OOSOutcome.PASS
 
 
@@ -65,22 +68,60 @@ def test_significant_edge_beating_buy_hold_passes():
 def test_insignificant_sample_fails_even_when_positive():
     # 30 trades, mean ~0 (alternating ±): t ≈ 0 < 1.65 → FAIL despite a non-trivial count.
     tr = [0.05 if i % 2 else -0.05 for i in range(30)]
-    m = {"n_trades": 30, "trade_returns": tr, "total_return": 0.30, "buy_hold_return": 0.0}
+    m = {"n_trades": 30, "trade_returns": tr, "total_return": 0.30, "buy_hold_return": 0.0,
+         "sharpe_annual": 0.1}
     assert _oos_verdict(m) is OOSOutcome.FAIL
 
 
 @pytest.mark.finding("H3")
 def test_significant_but_under_buy_hold_fails():
-    # Strong, significant per-trade edge (t high) but the strategy trails a flat long → no real
-    # value added. The sign-only bar passed this; the excess-over-buy-hold arm fails it.
+    # Strong, significant per-trade edge (t high, positive Sharpe → the tier VALIDATES) but the
+    # strategy trails a flat long → no real value added. The excess-over-buy-hold arm fails it.
     m = {"n_trades": 30, "trade_returns": _significant_returns(30),
-         "total_return": 0.10, "buy_hold_return": 0.30}
+         "total_return": 0.10, "buy_hold_return": 0.30, "sharpe_annual": 1.2}
     assert _oos_verdict(m) is OOSOutcome.FAIL
 
 
 def test_pass_bar_uses_the_validation_t_star():
     """Guard: the OOS bar reuses the 1.65 validation t*, not a looser selection threshold."""
     assert VALIDATE_T == 1.65
+
+
+# ── valconf / R5: the OOS trade bar is frequency-scaled to the IS tempo ──
+
+@pytest.mark.finding("R5")
+def test_slow_strategy_clears_the_frequency_scaled_oos_bar():
+    """A low-frequency strategy: ~8 IS trades over ~4y produces ~12 trades over a ~6y OOS window. The old
+    FIXED-20 bar called a genuinely-significant 12-trade edge UNEVALUATED ('not enough trades'); the
+    tempo-scaled bar (~12) lets it earn a real PASS."""
+    m = {"n_trades": 12, "trade_returns": _significant_returns(12),
+         "total_return": 0.40, "buy_hold_return": 0.10, "sharpe_annual": 1.4}
+    # unknown tempo → the conservative fixed ceil (20) → 12 trades is too thin → UNEVALUATED
+    assert _oos_verdict(m) is OOSOutcome.UNEVALUATED
+    # known slow tempo: 8 trades / 1460d projected over 2190d ≈ 12 → bar 12 → the SAME sample PASSES
+    assert _oos_verdict(m, train_trades=8, train_days=1460, oos_days=2190) is OOSOutcome.PASS
+
+
+@pytest.mark.finding("R5")
+def test_scaled_bar_is_clamped_to_the_oos_floor():
+    """Even a very fast IS tempo cannot drop the OOS bar below OOS_FLOOR (10): a 6-trade OOS sample is
+    still too thin to judge → UNEVALUATED, never a lucky PASS."""
+    m = {"n_trades": 6, "trade_returns": _significant_returns(6),
+         "total_return": 0.40, "buy_hold_return": 0.10, "sharpe_annual": 1.4}
+    assert _oos_verdict(m, train_trades=500, train_days=1460, oos_days=2190) is OOSOutcome.UNEVALUATED
+
+
+@pytest.mark.finding("R5")
+def test_per_bar_evidence_never_manufactures_an_oos_pass():
+    """R6 honesty invariant at the OOS boundary: a sub-bar trade count with a long, positive in-market
+    daily series is per-BAR evidence. It is autocorrelation-inflated, so it NEVER produces a PASS — the
+    verdict stays UNEVALUATED ('we don't know'), not a lucky promotion, no matter how good the daily edge."""
+    daily = [0.01, -0.005, 0.008, -0.003] * 75            # 300 bars, positive mean, non-constant
+    m = {"n_trades": 3, "trade_returns": [0.02, 0.03, 0.01],
+         "total_return": 0.90, "buy_hold_return": 0.10, "sharpe_annual": 1.6,
+         "returns": daily, "exposure_time": 1.0}
+    # 3 trades is below any scaled bar → per-bar basis (300 in-market bars) → UNEVALUATED, never PASS.
+    assert _oos_verdict(m, train_trades=3, train_days=1460, oos_days=2190) is OOSOutcome.UNEVALUATED
 
 
 # ── H17: exception / thin sample → UNEVALUATED (no budget, no terminal row) ──
@@ -163,7 +204,7 @@ class _FakeExecutor:
 
 def _pass_metrics() -> dict:
     return {"n_trades": 30, "trade_returns": _significant_returns(30),
-            "total_return": 0.50, "buy_hold_return": 0.10}
+            "total_return": 0.50, "buy_hold_return": 0.10, "sharpe_annual": 1.5}
 
 
 def _fixture(lineage_id: str):
