@@ -33,6 +33,14 @@ def test_sharpe_ci_is_opt_in_and_deterministic():
 @pytest.mark.finding("R11")
 def test_optimizer_headline_result_carries_a_ci():
     # the CLI's headline (optimizer best-result rerun) attaches a Sharpe CI (sampling precision).
-    res = optimize(OptimizationConfig(strategy_class=SMACrossover, data=make_ohlcv(days=400, seed=4), n_trials=4))
+    # SEEDED so the trial sequence — and thus the best result — is deterministic: an unseeded run
+    # occasionally lands on a no-trade best strategy (flat equity → CI legitimately None), which made
+    # this test flaky. A fixed seed pins a trading best result with a real CI.
+    cfg = dict(strategy_class=SMACrossover, data=make_ohlcv(days=400, seed=4), n_trials=8, seed=42)
+    res = optimize(OptimizationConfig(**cfg))
     assert res.best_result.sharpe_ci_low is not None
     assert res.best_result.sharpe_ci_low <= res.best_result.sharpe_ci_high
+    # deterministic: same seed → identical headline CI (M12)
+    res2 = optimize(OptimizationConfig(**cfg))
+    assert (res.best_result.sharpe_ci_low, res.best_result.sharpe_ci_high) == \
+           (res2.best_result.sharpe_ci_low, res2.best_result.sharpe_ci_high)

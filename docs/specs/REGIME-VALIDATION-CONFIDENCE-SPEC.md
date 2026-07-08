@@ -93,14 +93,14 @@ scaled_min_trades(train_trades, train_days, holdout_days, *, floor, ceil) -> int
     rate = train_trades / train_days
     return int(clamp(round(rate * holdout_days), floor, ceil))
 
-in_market_daily_returns(returns, exposure_time) -> np.ndarray      # QF1
-    # `returns` includes flat cash bars; validation evidence must use the IN-MARKET series.
-    # v1: if exposure_time in (0,1], keep the last round(exposure_time*len) non-… — PREFERRED: reconstruct
-    # the held-position bars from the trade timestamps (as _lagged_sharpe_annual already does) and slice
-    # `returns` to them. Report n_bars_in_market from THIS, not len(returns).
+# NOTE (D8, Phase-Z resolution): NO `in_market_daily_returns` primitive ships in v1. The CI and per-bar
+# evidence are computed on the REALIZED full-period daily `returns` (flat cash bars included) — the same
+# series `sharpe_annual` comes from — so the CI brackets the reported Sharpe. A correct in-market mask needs
+# a per-bar position series the executor does not emit (`exposure_time` is a scalar); the "last N bars" proxy
+# is wrong (assumes contiguous end-exposure). `n_bars_in_market` is reported as an exposure×bars ESTIMATE.
 
-per_bar_sharpe_and_t(daily_in_market, ppy) -> (sharpe, t, n)       # EVIDENCE ONLY (never validates)
-    # sharpe = annualized_sharpe(daily_in_market, ppy)
+per_bar_sharpe_and_t(daily, ppy) -> (sharpe, t, n)                 # EVIDENCE ONLY (never validates)
+    # sharpe = annualized_sharpe(daily, ppy)     # full-period realized series (D8)
     # t = mean/se where se uses a HAC/Newey-West or block estimate (NOT naive std/√N) — daily returns of a
     #     held position are autocorrelated; a naive √N t is inflated ~√(bars/trades). If a HAC se is out of
     #     v1 scope, cap the per-bar contribution at tier `weak` regardless of t (it must never validate).
@@ -114,8 +114,7 @@ block_bootstrap_sharpe_ci(daily, ppy, *, level, block_len, n, seed) -> (lo, hi) 
 ```
 1. Run the hold-out backtest → n_trades, trade_returns, returns, exposure_time, sharpe.
 2. min_req = scaled_min_trades(train_trades, train_days, holdout_days, floor=REGIME_FLOOR, ceil=VALIDATE_MIN_TRADES)
-3. daily_im = in_market_daily_returns(returns, exposure_time)
-   ci = block_bootstrap_sharpe_ci(daily_im, ppy, seed=run_seed)          # always reported (R4)
+3. ci = block_bootstrap_sharpe_ci(returns, ppy, seed=seed)               # full-period realized returns (D8); always reported (R4)
 4. VALIDATION PATH (real trades):
       if n_trades >= min_req and len(trade_returns) >= 2 and not zero_variance(trade_returns):
           t = per_trade_t(trade_returns); basis = "per_trade"
@@ -167,7 +166,7 @@ The confidence tier + CI are attached for display; the PASS/FAIL/UNEVALUATED tha
 
 ### 5.8 Normal backtest / walk-forward (R10–R12) — flagship
 - **Walk-forward** (`engine/walk_forward.py`): replace `_window_is_valid`'s binary with the R1/R2/R3 machinery on each test window; `is_valid ⇔ tier ∈ {strong, moderate}` (a real per-trade significance decision — same *meaning* as "this window's OOS edge is real," just frequency-aware); attach `confidence_tier` + CI beside `overfitting_score`.
-- **Single `run_backtest`** (`engine/runner.py`): opt-in `sharpe_ci_low/high` (+ tier) from the in-market daily returns; CLI/results-store surface it labelled **"sampling precision — not an overfitting/robustness verdict"** (R11).
+- **Single `run_backtest`** (`engine/runner.py`): opt-in `sharpe_ci_low/high` (+ tier) from the realized equity-curve daily returns (full-period, D8 — the same series the reported Sharpe uses, so the CI brackets it); CLI/results-store surface it labelled **"sampling precision — not an overfitting/robustness verdict"** (R11).
 - **Optimizer**: no objective change (never select on a noisy CI); optionally record the best trial's CI for display; DSR stays the multiple-testing guard (R12).
 
 ---
@@ -187,11 +186,12 @@ M28/M49/failure-breaker/goal_met read the **status** exactly as today; the tier 
 Constants live in one module block so they are auditable/tunable.
 - **D1 — Thresholds & level (DECIDED):** one-sided **95%** base (`VALIDATE_T`=1.65). `STRONG_T`=2.5, effective strong bar = `max(2.5, t_star)`. `moderate` bar = `t_star` (≥1.65). **Student-t (df-aware)** critical values at the df of the sample (df = n_trades−1 for per-trade); fall back to the normal bar only for large n.
 - **D2 — Floors/ceil (DECIDED):** `REGIME_FLOOR`=5, `OOS_FLOOR`=10, `ceil`=`VALIDATE_MIN_TRADES`=20, `STRONG_FLOOR`=12 (decoupled from the scaled floor — `strong` cannot be earned on 5 trades).
-- **D3 — Block bootstrap (DECIDED):** `level`=0.90, `n`=1000, `block_len = max(2, round(√N))` (moving-block on the in-market return series). New engine primitive (the `synthetic.py` OHLCV block-bootstrap is a different shape — reuse the *concept*, not the function). Seeded from the run `seed`.
+- **D3 — Block bootstrap (DECIDED):** `level`=0.90, `n`=1000, `block_len = max(2, round(√N))` (moving-block on the realized full-period return series — see D8). New engine primitive (the `synthetic.py` OHLCV block-bootstrap is a different shape — reuse the *concept*, not the function). Seeded (deterministic); the research loop has no run-seed parameter, so it uses a fixed `seed=0` — fully reproducible (same inputs → same CI). Threading a per-run seed is a documented, non-blocking future nicety.
 - **D4 — RESOLVED:** per-bar evidence **never validates** — caps at `weak`; status stays `unvalidated` (§0/R6).
 - **D5 — DECIDED (cap-only v1):** the per-bar `t` is **display-only** and capped at tier `weak`, so an imperfect (non-HAC) `t` never gates a status. HAC/Newey-West is a documented fast-follow, only relevant if per-bar is ever allowed to influence more than the display tier.
 - **D6 — DECIDED (yes):** Track A (walk-forward/backtest) ships alongside Track B; primitives built once; walk-forward first as flagship.
 - **D7 — DECIDED (keep):** `regime_failed = a real per-trade test ran and did not clear the bar (negative/collapsed)`; unchanged so M28/M49/failure-breaker/goal_met are structurally unaffected.
+- **D8 — DECIDED (Phase-Z resolution, 2026-07-08):** the CI and per-bar evidence are computed on the **realized full-period daily returns** (flat cash bars included), NOT an in-market-masked series. The v2 spec called for an `in_market_daily_returns(returns, exposure_time)` primitive; Phase-Z review showed (a) a correct mask needs a per-bar position series the executor does not emit (`exposure_time` is a scalar) — the leaf `confidence.py` only receives `(returns, exposure_time)`, and the "reconstruct from trade timestamps" precedent (`_lagged_sharpe_annual`) does not exist; (b) the "last `round(exp·len)` bars" proxy is statistically wrong (assumes contiguous end-exposure) — a wrong mask is worse than none (model-honesty); (c) **decisively**, the reported Sharpe is full-period, so the CI *must* be built on the same full-period series or it need not even bracket the point estimate. Impact of the flat bars is display-only and strictly conservative: they pull the per-bar Sharpe toward zero, never manufacturing a validating verdict (`validates` is a per-trade decision that never consults the CI/per-bar series; strong↔moderate is cosmetic since both validate). True in-market masking is a future enhancement gated on the executor emitting a per-bar exposure mask.
 
 ---
 
@@ -208,7 +208,7 @@ Constants live in one module block so they are auditable/tunable.
 
 ## 9. Implementation plan (phased, each PR-able + test-gated; adversarial review at the end)
 
-**Phase 0 — engine primitives.** `scaled_min_trades`, `in_market_daily_returns`, `per_bar_sharpe_and_t`, `block_bootstrap_sharpe_ci` + the total tier function → pure functions in `engine/` + unit tests (boundaries, seed-determinism, thin/degenerate inputs, std==0, sign-disagreement, in-market masking). *No behaviour change.*
+**Phase 0 — engine primitives.** `scaled_min_trades`, `per_bar_sharpe_and_t`, `block_bootstrap_sharpe_ci` + the total tier function → pure functions in `engine/` + unit tests (boundaries, seed-determinism, thin/degenerate inputs, std==0, sign-disagreement, full-period CI brackets the reported Sharpe — D8). *No behaviour change.* (No `in_market_daily_returns` — dropped per D8.)
 
 **Track A — walk-forward / backtest (flagship).**
 - A1 — R10 walk-forward window validity (tier-based, frequency-aware) + window CI. Tests.

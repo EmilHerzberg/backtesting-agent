@@ -6,12 +6,14 @@ import pytest
 
 from src.backend.backtesting.engine.confidence import (
     STRONG_FLOOR,
+    assess_confidence,
     block_bootstrap_sharpe_ci,
     confidence_tier,
     per_bar_sharpe_and_t,
     scaled_min_trades,
     student_t_critical,
 )
+from src.backend.backtesting.engine.metrics import annualized_sharpe
 
 
 # ── R1: scaled_min_trades ────────────────────────────────────────────────
@@ -97,3 +99,28 @@ def test_tier_per_bar_never_validates_even_with_huge_t():
     assert confidence_tier(basis="per_bar", t=99.0, observed_sharpe=2.0, n_trades=0, t_star=1.65, ci_low=1.0) == "weak"
     assert confidence_tier(basis="per_bar", t=99.0, observed_sharpe=-0.1, n_trades=0, t_star=1.65, ci_low=0.0) == "inconclusive"
     assert confidence_tier(basis="none", t=0.0, observed_sharpe=0.0, n_trades=0, t_star=1.65, ci_low=float("nan")) == "inconclusive"
+
+
+# ── D8 (Phase-Z): the CI rides on the REALIZED full-period series, not an in-market mask ──
+@pytest.mark.finding("D8")
+def test_ci_is_computed_on_the_full_period_series_not_masked():
+    """The block-bootstrap CI is built from the full daily series exactly as passed (flat cash bars included) —
+    the same series the reported Sharpe uses — so it brackets that Sharpe. It is NOT masked to in-market bars:
+    a correct mask needs a per-bar position series the engine leaf never receives, and masking would decouple
+    the CI from the reported full-period Sharpe (Phase-Z resolution, spec §7 D8)."""
+    rng = np.random.default_rng(11)
+    in_market = list(rng.normal(0.002, 0.01, 60))       # 60 real in-market bars
+    daily = in_market + [0.0] * 60                       # + 60 flat cash bars → exposure ≈ 0.5
+
+    a = assess_confidence(
+        train_trades=0, train_days=0, holdout_days=0, test_trades=0,
+        trade_returns=[], daily_returns=daily, exposure_time=0.5,
+        observed_sharpe=0.0, ppy=252.0, t_star=1.65, floor=5, seed=0,
+    )
+    full = block_bootstrap_sharpe_ci(daily, 252.0, seed=0)
+    assert (a.ci_low, a.ci_high) == (round(full[0], 4), round(full[1], 4))     # CI on the FULL series …
+    masked = block_bootstrap_sharpe_ci(in_market, 252.0, seed=0)               # … a masked subset would differ
+    assert (a.ci_low, a.ci_high) != (round(masked[0], 4), round(masked[1], 4))
+    # and the CI brackets the full-period Sharpe (the whole point of not masking)
+    point = float(annualized_sharpe(np.asarray(daily, dtype=float), 252.0))
+    assert a.ci_low <= point <= a.ci_high
