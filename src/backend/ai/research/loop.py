@@ -505,25 +505,33 @@ class _PromotionToken:
         self.approved_at = datetime.now(timezone.utc)
 
 
-def _oos_verdict(m: dict) -> Any:
-    """D5 / H3 — the real OOS pass bar.
+def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
+                 oos_days: float = 0, seed: int = 0) -> Any:
+    """D5 / H3 + valconf/R5 — the OOS pass bar, now frequency-aware and graded.
 
-    The old bar was sign-only (``sharpe_annual > 0 and total_return > 0``): a single lucky trade
-    passed. The honest bar requires a real trade sample, per-trade significance at the validation
-    ``t*``, and a positive edge *over buy-and-hold* (beating a flat long, not just being positive).
-    Too few trades is UNEVALUATED — 'we don't know' — never a FAIL (model-honesty principle).
+    The old bar demanded a FIXED 20 trades; here the trade bar SCALES to the strategy's IS tempo × the OOS
+    window length (floor ``OOS_FLOOR``), so a slow strategy over the long OOS window isn't auto-UNEVALUATED.
+    The OOS PASS/FAIL/UNEVALUATED CONTRACT is preserved:
+      * PASS ⇐ a real per-trade significance test clears the (df-aware) bar AND the edge is positive OVER
+        BUY-AND-HOLD (D5 — beating a flat long, not just positive).
+      * FAIL ⇐ a real per-trade test ran but was not significant / did not beat buy-and-hold (TERMINAL).
+      * UNEVALUATED ⇐ too thin for a per-trade test ('we don't know' — never a FAIL, model-honesty). A
+        per-bar block-bootstrap CI is still computed as evidence, but per-bar NEVER produces a PASS (R6).
     """
-    from src.backend.backtesting.gates.basic_gates import per_trade_t
+    from src.backend.backtesting.engine.confidence import OOS_FLOOR, assess_confidence
     from src.backend.backtesting.lockbox.service import OOSOutcome
 
-    n = int(m.get("n_trades", 0))
-    tr = m.get("trade_returns") or []
-    if n < OOS_MIN_TRADES or len(tr) < 2:
-        return OOSOutcome.UNEVALUATED            # too thin to judge — not a failure
-    t = per_trade_t(tr)                          # shared helper — same math as the activity gate
+    a = assess_confidence(
+        train_trades=int(train_trades), train_days=float(train_days), holdout_days=float(oos_days),
+        test_trades=int(m.get("n_trades", 0)), trade_returns=m.get("trade_returns") or [],
+        daily_returns=m.get("returns", []), exposure_time=float(m.get("exposure_time", 0.0) or 0.0),
+        observed_sharpe=float(m.get("sharpe_annual", 0.0)), ppy=252.0, t_star=VALIDATE_T,
+        floor=OOS_FLOOR, seed=int(seed),
+    )
+    if a.basis != "per_trade":                   # too thin for a real significance test → not a failure
+        return OOSOutcome.UNEVALUATED
     excess = float(m.get("total_return", 0.0)) - float(m.get("buy_hold_return", 0.0))
-    passed = (t >= VALIDATE_T) and (excess > 0.0)
-    return OOSOutcome.PASS if passed else OOSOutcome.FAIL
+    return OOSOutcome.PASS if (a.validates and excess > 0.0) else OOSOutcome.FAIL
 
 
 def _record_oos(state: ResearchState, candidate: Candidate, outcome_value: str,
@@ -590,7 +598,15 @@ def _run_oos_lockbox(
             data_agent, state.current_asset, oos_start, oos_end, oos_spec,
         )
         oos_metrics = executor.run(oos_spec, oos_data, warmup_bars=oos_wb)
-        return _oos_verdict(oos_metrics)
+        # valconf/R5: scale the OOS trade bar to the IS selection tempo (candidate's IS trades over the IS
+        # window span) × the OOS window length, so a slow strategy isn't auto-UNEVALUATED by a fixed bar.
+        return _oos_verdict(
+            oos_metrics,
+            train_trades=int(getattr(candidate, "n_trades", 0) or 0),
+            train_days=_days(getattr(state, "window_start", "") or "",
+                             getattr(state, "window_end", "") or ""),
+            oos_days=_days(oos_start, oos_end),
+        )
 
     outcome = lockbox.evaluate(token, run_oos_backtest=_oos_backtest)
     _record_oos(state, candidate, outcome.value, budget_lineage, emit)
