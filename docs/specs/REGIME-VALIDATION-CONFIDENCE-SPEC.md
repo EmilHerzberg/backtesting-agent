@@ -1,7 +1,7 @@
 # Backtest & Regime Validation Confidence — Requirements, Technical Spec & Implementation Plan
 
 **Finding:** M27 (deferred owner-decision half), broadened to the normal backtest / walk-forward path
-**Status:** DRAFT **v3** (revised after the spec adversarial review — 10 confirmed findings folded in; awaiting sign-off on §7)
+**Status:** APPROVED **v3** (2026-07-08 — spec adversarial review folded in; recommended defaults accepted; §7 decided; implementation started)
 **Date:** 2026-07-08
 
 Related: `REGIME-P2-HOLDOUT-SPEC` (loop.py `_run_regime_holdout`), H18 (Šidák hold-out-reuse `t_star`), M28 (regime goal-counting), M49 (plateau watermark), M29 (decay), D5/H3 (OOS pass bar), the model-honesty principle, and the deflated-Sharpe machinery already in the engine.
@@ -182,15 +182,16 @@ M28/M49/failure-breaker/goal_met read the **status** exactly as today; the tier 
 
 ---
 
-## 7. Open decisions to confirm
+## 7. Decisions (APPROVED 2026-07-08)
 
-- **D1 — Tier thresholds & confidence level:** `STRONG_T`=2.5 (but effective bar = `max(2.5, t_star)`), `moderate` at `t_star` (≥1.65), df-aware (Student-t) critical values at the chosen one-sided level. Confirm level + values.
-- **D2 — Floors/ceil:** `REGIME_FLOOR`=5, `OOS_FLOOR`≈10, `ceil`=`VALIDATE_MIN_TRADES`(20), `STRONG_FLOOR`≈12–15 (decoupled from the scaled floor so `strong` can't be earned on 5 trades). Confirm.
-- **D3 — Block bootstrap params:** `level`=0.90, `n`=1000, `block_len` (e.g. √N or ~5–10d). Confirm; confirm reuse of the `synthetic.py` block primitive.
-- **D4 — RESOLVED (was the key fork):** per-bar evidence **never validates** — caps at `weak`, status stays `unvalidated`. (This is now a stated principle §0/R6, not open. Flagging so you can veto.)
-- **D5 — Per-bar `t` correction:** HAC/Newey-West `se` for the per-bar t **now**, or ship v1 with per-bar capped at `weak` (so its t never gates a status) and add HAC later? Proposed: **cap-only for v1** (simplest honest path; the t is display-only), HAC as a fast-follow if we ever want per-bar to influence more.
-- **D6 — Scope/sequencing:** ship Track A (walk-forward/backtest) alongside Track B (regime/OOS)? Proposed **yes** (primitives once; walk-forward first as flagship).
-- **D7 — `regime_failed` control semantics (surfaced per F1-completeness):** confirm we KEEP `regime_failed = ran-but-not-significant-or-negative` (so M28/M49 are unaffected) rather than narrowing it to `sharpe<0`. Proposed: **keep** (v3 already assumes this).
+Constants live in one module block so they are auditable/tunable.
+- **D1 — Thresholds & level (DECIDED):** one-sided **95%** base (`VALIDATE_T`=1.65). `STRONG_T`=2.5, effective strong bar = `max(2.5, t_star)`. `moderate` bar = `t_star` (≥1.65). **Student-t (df-aware)** critical values at the df of the sample (df = n_trades−1 for per-trade); fall back to the normal bar only for large n.
+- **D2 — Floors/ceil (DECIDED):** `REGIME_FLOOR`=5, `OOS_FLOOR`=10, `ceil`=`VALIDATE_MIN_TRADES`=20, `STRONG_FLOOR`=12 (decoupled from the scaled floor — `strong` cannot be earned on 5 trades).
+- **D3 — Block bootstrap (DECIDED):** `level`=0.90, `n`=1000, `block_len = max(2, round(√N))` (moving-block on the in-market return series). New engine primitive (the `synthetic.py` OHLCV block-bootstrap is a different shape — reuse the *concept*, not the function). Seeded from the run `seed`.
+- **D4 — RESOLVED:** per-bar evidence **never validates** — caps at `weak`; status stays `unvalidated` (§0/R6).
+- **D5 — DECIDED (cap-only v1):** the per-bar `t` is **display-only** and capped at tier `weak`, so an imperfect (non-HAC) `t` never gates a status. HAC/Newey-West is a documented fast-follow, only relevant if per-bar is ever allowed to influence more than the display tier.
+- **D6 — DECIDED (yes):** Track A (walk-forward/backtest) ships alongside Track B; primitives built once; walk-forward first as flagship.
+- **D7 — DECIDED (keep):** `regime_failed = a real per-trade test ran and did not clear the bar (negative/collapsed)`; unchanged so M28/M49/failure-breaker/goal_met are structurally unaffected.
 
 ---
 
