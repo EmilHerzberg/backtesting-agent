@@ -15,6 +15,7 @@ Constants are the approved §7 defaults (2026-07-08) — kept here so they are a
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -155,3 +156,76 @@ def confidence_tier(
 
     # 5 — no usable statistic (too thin / degenerate).
     return TIER_INCONCLUSIVE
+
+
+def _significance_t(returns) -> float:
+    """One-sample significance t (mean/std(ddof=1)·√N). Mirrors ``basic_gates.per_trade_t`` but WITHOUT its
+    identical-values ``99.0`` shortcut — a zero-variance sample must NOT certify a validation (F6). ``0.0``
+    for <2 or a constant series (detected via ptp, since np.std leaves a ~1e-18 residual on identical floats)."""
+    a = np.asarray(returns, dtype=np.float64)
+    a = a[np.isfinite(a)]
+    if a.size < 2 or float(np.ptp(a)) == 0.0:
+        return 0.0
+    sd = float(a.std(ddof=1))
+    return float(a.mean() / sd * math.sqrt(a.size)) if sd > 0 else 0.0
+
+
+@dataclass
+class ConfidenceAssessment:
+    """The full assessment of one hold-out / test window (spec §5.3/§5.5). ``ci_low``/``ci_high`` are
+    ``None`` when the CI is undefined (too thin / degenerate) — JSON-safe (no NaN)."""
+
+    tier: str
+    basis: str                 # "per_trade" | "per_bar" | "none"
+    t_stat: float
+    observed_sharpe: float
+    n_trades: int
+    n_bars_in_market: int
+    min_req_trades: int
+    ci_low: float | None
+    ci_high: float | None
+    ci_level: float = CI_LEVEL
+
+    @property
+    def validates(self) -> bool:
+        """A VALIDATING verdict (regime_validated / OOS PASS / WF window valid) requires a real per-trade
+        significance decision — only tiers ``strong``/``moderate`` (reachable solely on a per_trade basis)."""
+        return self.tier in (TIER_STRONG, TIER_MODERATE)
+
+
+def assess_confidence(
+    *, train_trades: int, train_days: float, holdout_days: float,
+    test_trades: int, trade_returns, daily_returns, exposure_time: float,
+    observed_sharpe: float, ppy: float, t_star: float,
+    floor: int, ceil: int = VALIDATE_CEIL, seed: int = 0,
+) -> ConfidenceAssessment:
+    """Compose the primitives into a full confidence assessment (spec §5.3) — shared by walk-forward, the
+    regime hold-out, and single backtests. Routes to a per-trade *validation* test only when there are
+    enough real, non-degenerate trades; otherwise falls to per-bar *evidence* (which never validates, R6)
+    or ``none``. The block-bootstrap CI is always computed from the in-market daily returns.
+    """
+    min_req = scaled_min_trades(int(train_trades), float(train_days), float(holdout_days), floor=floor, ceil=ceil)
+    daily = np.asarray(daily_returns, dtype=np.float64)
+    daily = daily[np.isfinite(daily)]
+    n_bars_total = int(daily.size)
+    exp = min(1.0, max(0.0, float(exposure_time)))
+    n_bars_im = int(round(exp * n_bars_total))                       # QF1: honest in-market count
+    ci_lo_raw, ci_hi_raw = block_bootstrap_sharpe_ci(daily, ppy, seed=int(seed))
+
+    tr = np.asarray([x for x in (trade_returns or []) if x is not None], dtype=np.float64)
+    if int(test_trades) >= min_req and tr.size >= 2 and float(np.ptp(tr)) != 0.0:
+        basis, t, obs = "per_trade", _significance_t(tr), float(observed_sharpe)
+    elif n_bars_im >= MIN_BARS:
+        s_b, t, _ = per_bar_sharpe_and_t(daily, ppy)                  # sign check uses the per-bar Sharpe
+        basis, obs = "per_bar", s_b
+    else:
+        basis, t, obs = "none", 0.0, float(observed_sharpe)
+
+    tier = confidence_tier(basis=basis, t=t, observed_sharpe=obs,
+                           n_trades=int(test_trades), t_star=float(t_star), ci_low=ci_lo_raw)
+    return ConfidenceAssessment(
+        tier=tier, basis=basis, t_stat=round(float(t), 4), observed_sharpe=round(float(obs), 4),
+        n_trades=int(test_trades), n_bars_in_market=n_bars_im, min_req_trades=min_req,
+        ci_low=round(ci_lo_raw, 4) if math.isfinite(ci_lo_raw) else None,
+        ci_high=round(ci_hi_raw, 4) if math.isfinite(ci_hi_raw) else None,
+    )

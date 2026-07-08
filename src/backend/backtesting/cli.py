@@ -183,6 +183,18 @@ def _print_summary(results: list[dict[str, Any]], elapsed: float) -> None:
     print("  BACKTESTING RESULTS SUMMARY")
     print("=" * 70)
     print(_format_table(headers, rows))
+
+    # R11 (valconf): the Sharpe confidence interval, honestly labelled. It is the SAMPLING PRECISION of the
+    # Sharpe on this sample — how noisy the number is — NOT an overfitting/robustness verdict (that is what
+    # walk-forward / OOS is for). A band that straddles 0 means the Sharpe is not distinguishable from zero.
+    _ci_rows = [r for r in results if r.get("sharpe_ci_low") is not None]
+    if _ci_rows:
+        print("\n  Sharpe 90% CI (sampling precision — NOT an overfitting verdict):")
+        for r in _ci_rows:
+            print(f"    {r.get('symbol','')}/{r.get('strategy','')}: "
+                  f"Sharpe {r.get('sharpe_ratio', 0.0):.2f}  "
+                  f"[{r['sharpe_ci_low']:.2f}, {r['sharpe_ci_high']:.2f}]")
+
     print(f"\nTotal combinations: {len(results)}")
     print(f"Elapsed time: {elapsed:.1f}s")
     print("=" * 70)
@@ -480,6 +492,8 @@ def run_pipeline(
                         "best_params": opt_result.best_params,
                         "best_value": opt_result.best_value,
                         "n_trials": opt_result.n_trials,
+                        "sharpe_ci_low": best.sharpe_ci_low,      # R11 (valconf): Sharpe sampling precision
+                        "sharpe_ci_high": best.sharpe_ci_high,
                     })
 
                     logger.info(

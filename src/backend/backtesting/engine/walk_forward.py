@@ -14,6 +14,7 @@ if TYPE_CHECKING:  # pragma: no cover -- typing only
 # M11: the test/train overfitting ratio is only meaningful above a materially-positive train Sharpe.
 _MIN_TRAIN_SHARPE_FOR_RATIO = 0.2
 
+import numpy as np
 import pandas as pd
 
 from src.backend.marketdata.windows import rolling_windows
@@ -99,6 +100,12 @@ class WalkForwardWindow:
     test_result: BacktestResult
     overfitting_score: float
     is_valid: bool
+    # R10 (valconf): the graded confidence tier + block-bootstrap Sharpe CI for this test window
+    # (additive; `is_valid` now means "tier is strong/moderate" — a real frequency-aware significance
+    # decision — instead of the old `test_sharpe > threshold`). Defaults keep direct constructors working.
+    confidence_tier: str = ""
+    ci_low: float | None = None
+    ci_high: float | None = None
 
 
 @dataclass
@@ -126,13 +133,44 @@ class WalkForwardResult:
     crashed_windows: int = 0  # H6: windows that failed to optimise/evaluate — kept in the denominator
 
 
-def _window_is_valid(test_result: "BacktestResult", threshold: float) -> bool:
-    """H6: a window is 'valid' only if the strategy actually traded (>=1 trade) AND the test Sharpe
-    clears the threshold. A zero-trade or NaN-Sharpe window (the runner maps NaN -> 0.0) must NOT be
-    counted valid — otherwise a strategy that never trades out-of-sample reports 100% valid windows.
-    Note this also masks C1's worst symptom: a cold-started window that produces no trades fails here
-    instead of passing."""
-    return test_result.trade_count >= 1 and test_result.sharpe_ratio > threshold
+def _assess_window(train_result, test_result, train_df, test_df, *, seed):
+    """R10 (valconf) — assess a test window's out-of-sample edge with the frequency-aware, graded
+    confidence machinery instead of the old binary `test_sharpe > threshold`.
+
+    A window is *valid* (``assessment.validates``) only when a real per-trade significance test clears the
+    bar (tier strong/moderate) — the trade bar scales to the strategy's tempo × the test length, so a slow
+    strategy isn't punished for being slow, and a lucky few-trade window can't certify. The H6 guarantee is
+    preserved: a zero-trade window has no per-trade sample and ~0 in-market bars → tier ``inconclusive`` →
+    not valid. Defensive ``getattr`` keeps it working with the partial result stubs some tests use.
+    """
+    from src.backend.backtesting.engine.confidence import (
+        REGIME_FLOOR,
+        VALIDATE_T,
+        assess_confidence,
+    )
+    from src.backend.backtesting.engine.metrics import periods_per_year
+
+    eq = np.asarray(getattr(test_result, "equity_curve", None) or [], dtype=np.float64)
+    daily = (np.diff(eq) / eq[:-1]) if eq.size > 1 else np.array([], dtype=np.float64)
+    idx = getattr(test_df, "index", None)
+    ppy = periods_per_year(idx) if (idx is not None and len(idx) >= 2) else 252.0
+
+    def _span_days(df) -> int:
+        i = getattr(df, "index", None)
+        return max((i[-1] - i[0]).days, 1) if (i is not None and len(i) >= 2) else 1
+
+    trade_returns = [getattr(t, "pnl_pct", 0.0) / 100.0 for t in (getattr(test_result, "trades", None) or [])]
+    return assess_confidence(
+        train_trades=int(getattr(train_result, "trade_count", 0)),
+        train_days=_span_days(train_df),
+        holdout_days=_span_days(test_df),
+        test_trades=int(getattr(test_result, "trade_count", 0)),
+        trade_returns=trade_returns,
+        daily_returns=daily,
+        exposure_time=float(getattr(test_result, "exposure_time", 0.0) or 0.0),
+        observed_sharpe=float(getattr(test_result, "sharpe_ratio", 0.0) or 0.0),
+        ppy=ppy, t_star=VALIDATE_T, floor=REGIME_FLOOR, seed=int(seed or 0),
+    )
 
 
 def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
@@ -239,7 +277,8 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
         else:
             overfitting_score = float("nan")
 
-        is_valid = _window_is_valid(test_result, config.validation_threshold)
+        # R10: frequency-aware, graded validity (replaces `test_sharpe > threshold`).
+        assess = _assess_window(train_result, test_result, train_df, test_df, seed=config.seed)
 
         wf_windows.append(
             WalkForwardWindow(
@@ -252,7 +291,10 @@ def walk_forward_validate(config: WalkForwardConfig) -> WalkForwardResult:
                 train_result=train_result,
                 test_result=test_result,
                 overfitting_score=overfitting_score,
-                is_valid=is_valid,
+                is_valid=assess.validates,
+                confidence_tier=assess.tier,
+                ci_low=assess.ci_low,
+                ci_high=assess.ci_high,
             )
         )
 

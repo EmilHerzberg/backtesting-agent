@@ -6,6 +6,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 
+import numpy as np
 import pandas as pd
 from backtesting import Backtest
 
@@ -79,6 +80,11 @@ class BacktestConfig:
     # not dilute them. Used by walk-forward / OOS / hold-out so a strategy isn't "validated" on cold,
     # unconverged indicators.
     warmup_bars: int = 0
+    # R11 (valconf): opt-in — compute a block-bootstrap CI on the Sharpe. HONEST SCOPE: this is the
+    # SAMPLING PRECISION of THIS backtest's Sharpe (how noisy the number is on this sample), NOT an
+    # overfitting / robustness verdict (that needs walk-forward / OOS). Off by default (the bootstrap is
+    # ~1000 resamples); seeded from ``seed`` → deterministic.
+    compute_confidence_interval: bool = False
 
 
 # Forward-reference resolver (kept at module level so the dataclass annotation
@@ -105,6 +111,10 @@ class BacktestResult:
     trade_count: int = 0
     profit_factor: float = 0.0
     calmar_ratio: float = 0.0
+    # R11 (valconf) — opt-in block-bootstrap CI on the Sharpe (``None`` unless requested / too thin).
+    # Sampling precision of THIS Sharpe, NOT an overfitting/robustness claim.
+    sharpe_ci_low: float | None = None
+    sharpe_ci_high: float | None = None
 
     # Additional
     equity_curve: list[float] = field(default_factory=list)
@@ -327,6 +337,19 @@ def run_backtest(
             "the strategy never generated a signal in this date range. "
             "Try a wider window or different parameters."
         )
+
+    # R11 (valconf): opt-in Sharpe confidence interval — block bootstrap over the equity-curve daily
+    # returns. Deterministic (seeded). Reports how NOISY this Sharpe is on this sample; it is NOT an
+    # overfitting/robustness verdict. ``None`` when off or the series is too thin for a meaningful band.
+    if config.compute_confidence_interval and len(result.equity_curve) > 2:
+        from src.backend.backtesting.engine.confidence import block_bootstrap_sharpe_ci
+        _eq = np.asarray(result.equity_curve, dtype=np.float64)
+        _daily = np.diff(_eq) / _eq[:-1]
+        _ppy = periods_per_year(bt_data.index) if isinstance(bt_data.index, pd.DatetimeIndex) else 252.0
+        _lo, _hi = block_bootstrap_sharpe_ci(_daily, _ppy, seed=int(config.seed or 0))
+        result.sharpe_ci_low = round(_lo, 4) if math.isfinite(_lo) else None
+        result.sharpe_ci_high = round(_hi, 4) if math.isfinite(_hi) else None
+
     return result
 
 
