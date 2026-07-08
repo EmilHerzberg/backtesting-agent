@@ -436,44 +436,60 @@ def _sidak_t_star(k: int) -> float:
 
 
 def _run_regime_holdout(spec, data_agent, executor, train_end, window_end, *,
-                        t_star: float = VALIDATE_T) -> dict:
-    """P2 — within-regime forward-slice validation. Select-on-train: the idea was surfaced on the
-    train slice; here we test whether the edge PERSISTS on the unseen final hold-out. A pass earns
-    ``regime_validated``; a collapse ``regime_failed``; a too-thin slice stays ``unvalidated``
-    (unvalidatable, not a failure). Uses a DEDICATED stricter bar (P2-R4), NOT the selection rigor;
-    ``t_star`` may be raised above VALIDATE_T by the caller to correct for hold-out reuse (H18/D6).
-    Local backtest (no LLM). Never raises into the loop."""
+                        t_star: float = VALIDATE_T, train_trades: int = 0, train_days: float = 0,
+                        seed: int = 0) -> dict:
+    """P2 + M27/valconf — within-regime forward-slice validation, frequency-aware and graded.
+
+    Select-on-train: the idea was surfaced on the train slice; here we test whether the edge PERSISTS on
+    the unseen final hold-out. The trade bar SCALES to the strategy's own tempo (estimated from the train
+    window) × the hold-out length, so a slow strategy isn't punished for being slow and a lucky few-trade
+    slice can't certify. A real per-trade significance test at ``t_star`` (Šidák-reuse-corrected by the
+    caller, H18) earns ``regime_validated`` (tier strong/moderate); a negative/collapsed edge is
+    ``regime_failed``; anything else stays ``unvalidated`` — including a per-BAR evidence signal, which
+    NEVER validates (R6). The observed Sharpe, t, sample sizes, tier, and a block-bootstrap CI are ALWAYS
+    reported. Local backtest (no LLM). Never raises into the loop."""
     if not train_end or _days(train_end, window_end) < MIN_HOLD_DAYS:
-        return {"status": "unvalidated", "reason": "no usable hold-out slice"}
+        return {"status": "unvalidated", "confidence_tier": "inconclusive",
+                "reason": "no usable hold-out slice", "holdout_period": [train_end, window_end]}
     try:
         data, wb = _prepare_with_warmup(data_agent, spec.get("security_id", ""), train_end, window_end, spec)
         m = executor.run({**spec, "window_start": train_end, "window_end": window_end}, data, warmup_bars=wb)
     except Exception as exc:
-        return {"status": "unvalidated", "reason": "hold-out backtest failed", "error": str(exc)}
-    n = int(m.get("n_trades", 0))
-    tr = m.get("trade_returns") or []            # executor.run returns trade_returns (executor.py:109)
-    if n < VALIDATE_MIN_TRADES or len(tr) < 2:   # too thin to VALIDATE (P2-R4) — unvalidatable, NOT a failure
-        # M27: still surface the OBSERVED hold-out numbers (Sharpe always; the per-trade t when ≥2 returns
-        # make it defined) so the honest "here's what we measured, just not enough to certify" evidence is
-        # never dropped — instead of reporting only the trade count.
-        # M27: report the reason that actually tripped — n<MIN, OR too few usable trade returns for a t
-        # (the old string said "(n < MIN trades)" even when n>=MIN but there were <2 returns — false).
-        _reason = (f"hold-out too thin to validate ({n} < {VALIDATE_MIN_TRADES} trades)"
-                   if n < VALIDATE_MIN_TRADES else "hold-out too thin to validate (<2 usable trade returns)")
-        _obs = {"status": "unvalidated", "reason": _reason,
-                "holdout_period": [train_end, window_end], "holdout_trades": n,
-                "holdout_sharpe": round(float(m.get("sharpe_annual", 0.0)), 3)}
-        if len(tr) >= 2:
-            from src.backend.backtesting.gates.basic_gates import per_trade_t
-            _obs["holdout_t"] = round(float(per_trade_t(tr)), 3)
-        return _obs
-    from src.backend.backtesting.gates.basic_gates import per_trade_t
-    t = per_trade_t(tr)                          # shared helper — same math as the activity gate
-    passed = t >= t_star                          # positive + significant at the (reuse-corrected) bar
-    return {"status": "regime_validated" if passed else "regime_failed",
-            "holdout_period": [train_end, window_end], "holdout_trades": n,
-            "holdout_t": round(float(t), 3), "t_star": round(float(t_star), 3),
-            "holdout_sharpe": round(float(m.get("sharpe_annual", 0.0)), 3)}
+        return {"status": "unvalidated", "confidence_tier": "inconclusive",
+                "reason": "hold-out backtest failed", "error": str(exc),
+                "holdout_period": [train_end, window_end]}
+
+    from src.backend.backtesting.engine.confidence import (
+        REGIME_FLOOR,
+        TIER_FAILED,
+        TIER_MODERATE,
+        TIER_STRONG,
+        assess_confidence,
+    )
+    a = assess_confidence(
+        train_trades=int(train_trades), train_days=float(train_days),
+        holdout_days=float(_days(train_end, window_end)),
+        test_trades=int(m.get("n_trades", 0)), trade_returns=m.get("trade_returns") or [],
+        daily_returns=m.get("returns", []), exposure_time=float(m.get("exposure_time", 0.0) or 0.0),
+        observed_sharpe=float(m.get("sharpe_annual", 0.0)), ppy=252.0, t_star=float(t_star),
+        floor=REGIME_FLOOR, seed=int(seed),
+    )
+    # tier → control status (§6). Only a per-trade strong/moderate VALIDATES; a real per-trade collapse
+    # (negative/failed) is regime_failed; per-bar/weak/inconclusive stay unvalidated (per-bar never certifies).
+    if a.tier in (TIER_STRONG, TIER_MODERATE):
+        status = "regime_validated"
+    elif a.tier == TIER_FAILED:
+        status = "regime_failed"
+    else:
+        status = "unvalidated"
+    return {
+        "status": status, "confidence_tier": a.tier, "basis": a.basis,
+        "holdout_period": [train_end, window_end], "holdout_trades": a.n_trades,
+        "holdout_t": round(float(a.t_stat), 3), "t_star": round(float(t_star), 3),
+        "holdout_sharpe": round(float(m.get("sharpe_annual", 0.0)), 3),
+        "n_bars_in_market": a.n_bars_in_market, "min_req_trades": a.min_req_trades,
+        "ci_low": a.ci_low, "ci_high": a.ci_high, "ci_level": a.ci_level,
+    }
 
 
 # ── OOS lockbox helper ────────────────────────────────────────────────
@@ -1021,8 +1037,11 @@ async def research_loop(
                     _ho_prior = state.holdout_eval_counts.get(_ho_key, 0)
                     _hold = _run_regime_holdout(
                         spec, data_agent, executor, getattr(state, "train_end", ""), state.window_end,
-                        t_star=_sidak_t_star(_ho_prior + 1))
-                    if _hold["status"] in ("regime_validated", "regime_failed"):  # a real test ran
+                        t_star=_sidak_t_star(_ho_prior + 1),
+                        # valconf/M27: the frequency-scaled bar needs the strategy's train-window tempo.
+                        train_trades=int(metrics.get("n_trades", 0)),
+                        train_days=_days(getattr(state, "window_start", ""), getattr(state, "train_end", "")))
+                    if _hold.get("basis") == "per_trade":   # a REAL significance test ran → consumes a Šidák peek
                         state.holdout_eval_counts[_ho_key] = _ho_prior + 1
                         _hold["holdout_peek_index"] = _ho_prior + 1
                     candidate.holdout = _hold

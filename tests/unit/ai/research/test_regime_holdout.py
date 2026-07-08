@@ -39,8 +39,9 @@ class _FakeExec:
 
 
 _STRONG = [0.01 + 0.001 * ((i % 3) - 1) for i in range(30)]   # mean~1%, tiny std → t well above 1.65
-_FLAT = [0.05 if i % 2 else -0.05 for i in range(30)]          # mean~0 → t~0
+_FLAT = [0.05 if i % 2 else -0.05 for i in range(30)]          # mean~0 → t~0 (positive-but-not-significant)
 _MODERATE = [0.015 if i % 2 else -0.005 for i in range(30)]    # per-trade t ≈ 2.7: passes 1.65, fails 2.8
+_LOSING = [-0.01 - 0.001 * ((i % 3) - 1) for i in range(30)]   # mean ≈ -1% → a genuinely NEGATIVE edge
 
 
 # ── _train_split (P2-R2) ──────────────────────────────────────────────
@@ -68,17 +69,35 @@ def test_holdout_validated():
 
 
 def test_holdout_failed_when_edge_collapses():
+    # valconf: `regime_failed` now means a real per-trade test with a NEGATIVE / collapsed edge.
+    ex = _FakeExec({"n_trades": 30, "trade_returns": _LOSING, "sharpe_annual": -0.5})
+    r = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01")
+    assert r["status"] == "regime_failed" and r["confidence_tier"] == "failed"
+
+
+def test_holdout_flat_edge_is_unvalidated_not_failed():
+    # valconf/D7: a zero / not-significant-but-positive edge is UNKNOWN (unvalidated), not a collapse.
     ex = _FakeExec({"n_trades": 30, "trade_returns": _FLAT, "sharpe_annual": 0.0})
     r = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01")
-    assert r["status"] == "regime_failed"
-    assert r["holdout_t"] < VALIDATE_T
+    assert r["status"] == "unvalidated" and r["confidence_tier"] == "weak"
 
 
 def test_holdout_thin_stays_unvalidated():
+    # No train tempo passed → the bar stays the full ceil (20); 10 trades can't certify → unvalidated.
     ex = _FakeExec({"n_trades": 10, "trade_returns": _STRONG[:10], "sharpe_annual": 1.4})
     r = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01")
-    assert r["status"] == "unvalidated"       # 10 < VALIDATE_MIN_TRADES, never a fabricated verdict
-    assert "too thin" in r["reason"]
+    assert r["status"] == "unvalidated"       # never a fabricated verdict on too few trades
+    assert r["confidence_tier"] in ("weak", "inconclusive") and r["holdout_trades"] == 10
+
+
+def test_slow_strategy_validates_on_the_scaled_bar():
+    # M27 CORE: with a low train tempo the bar scales DOWN (to the floor 5), so a slow strategy with ~6
+    # hold-out trades gets a REAL verdict instead of being stuck at `unvalidated` by a fixed-20 bar.
+    ex = _FakeExec({"n_trades": 6, "trade_returns": _STRONG[:6], "sharpe_annual": 1.4})
+    r = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01",
+                            train_trades=6, train_days=1826)     # 6 trades over ~5y → very slow
+    assert r["basis"] == "per_trade" and r["min_req_trades"] <= 6
+    assert r["status"] == "regime_validated"                     # a real verdict, not auto-unvalidated
 
 
 def test_holdout_no_slice():
@@ -111,8 +130,10 @@ def test_holdout_verdict_uses_the_corrected_bar():
     assert base["status"] == "regime_validated"
     assert base["t_star"] == pytest.approx(VALIDATE_T)
 
+    # valconf: not clearing the reuse-corrected bar with a POSITIVE edge is UNVALIDATED (couldn't certify),
+    # not a collapse. The H18 mechanism still applies — the tighter bar flips validated → unvalidated.
     strict = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01", t_star=2.8)
-    assert strict["status"] == "regime_failed"
+    assert strict["status"] == "unvalidated" and strict["confidence_tier"] == "weak"
     assert strict["t_star"] == pytest.approx(2.8)
     assert strict["holdout_t"] == base["holdout_t"]   # identical evidence, stricter bar
 
@@ -243,9 +264,13 @@ async def test_regime_failed_candidate_does_not_advance_the_watermark(monkeypatc
             pass
 
         def run(self, spec, data, *, warmup_bars=0):
+            # Window-aware: the SELECTION run (train slice) has a HIGH in-sample Sharpe (5.0), but the
+            # HOLD-OUT run (window_end == the full window end) COLLAPSES to a negative edge → regime_failed.
+            failed = spec.get("window_end") == "2018-01-01"
             return {
-                "sharpe_annual": 5.0, "total_return": 0.4, "max_drawdown": -0.1, "n_trades": 30,
-                "trade_returns": _FLAT, "exposure_time": 0.5, "win_rate": 0.5, "profit_factor": 1.1,
+                "sharpe_annual": -2.0 if failed else 5.0, "total_return": -0.2 if failed else 0.4,
+                "max_drawdown": -0.1, "n_trades": 30, "trade_returns": _LOSING if failed else _STRONG,
+                "exposure_time": 0.5, "win_rate": 0.5, "profit_factor": 1.1,
                 "buy_hold_return": 0.1, "buy_hold_sharpe": 0.5, "buy_hold_max_drawdown": -0.15,
                 "benchmark_available": True, "returns": np.zeros(30), "equity_curve": [100.0] * 30,
                 "strategy_hash": spec.get("strategy_hash", ""), "template_id": spec.get("template_id", ""),
@@ -279,24 +304,13 @@ async def test_regime_failed_candidate_does_not_advance_the_watermark(monkeypatc
 
 
 @pytest.mark.finding("M27")
-def test_thin_holdout_still_reports_observed_sharpe_and_t():
-    # M27: a too-thin hold-out is UNVALIDATED (not a verdict), but the observed numbers must not be dropped.
+def test_thin_holdout_still_reports_observed_evidence():
+    # M27: a too-thin hold-out is UNVALIDATED (not a verdict), but the observed evidence must not be dropped —
+    # valconf enriches every result with the tier, the basis, the sample sizes, the t, and the CI.
     ex = _FakeExec({"n_trades": 10, "trade_returns": _STRONG[:10], "sharpe_annual": 1.4})
     r = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01")
     assert r["status"] == "unvalidated"
-    assert r["holdout_sharpe"] == pytest.approx(1.4)           # pre-fix: key absent in the too-thin branch
-    assert "holdout_t" in r                                    # 10 returns → per-trade t is defined
-    # a genuinely too-thin (<2 returns) slice still reports the Sharpe, just no t
-    ex2 = _FakeExec({"n_trades": 1, "trade_returns": [0.01], "sharpe_annual": 0.7})
-    r2 = _run_regime_holdout({}, _FakeData(), ex2, "2019-01-01", "2020-06-01")
-    assert r2["holdout_sharpe"] == pytest.approx(0.7) and "holdout_t" not in r2
-
-
-@pytest.mark.finding("M27")
-def test_thin_holdout_reason_names_the_condition_that_tripped():
-    # M27 (re-review F1): when n >= VALIDATE_MIN_TRADES but there are <2 usable trade returns, the reason
-    # must say THAT — the old string unconditionally said "(n < MIN trades)", literally false here.
-    ex = _FakeExec({"n_trades": 25, "trade_returns": [0.01], "sharpe_annual": 1.2})
-    r = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01")
-    assert r["status"] == "unvalidated"
-    assert r["reason"] == "hold-out too thin to validate (<2 usable trade returns)"   # pre-fix: "(25 < 20 trades)"
+    assert r["holdout_sharpe"] == pytest.approx(1.4)           # observed number never dropped
+    for k in ("holdout_t", "confidence_tier", "basis", "n_bars_in_market", "min_req_trades",
+              "ci_low", "ci_high", "ci_level"):
+        assert k in r, k
