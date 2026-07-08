@@ -28,7 +28,7 @@ REGIME_FLOOR = 5         # min trades to ATTEMPT a per-trade validation on a (sh
 OOS_FLOOR = 10           # ... on the (longer) OOS window
 VALIDATE_CEIL = 20       # ceil of the frequency-scaled bar (== legacy VALIDATE_MIN_TRADES)
 STRONG_FLOOR = 12        # `strong` needs a real sample — decoupled from the scaled floor (D2)
-MIN_BARS = 20            # min in-market bars to compute a per-bar evidence signal / a CI
+MIN_BARS = 20            # min bars (in-market estimate) to gate a per-bar evidence signal / a CI
 CI_LEVEL = 0.90          # bootstrap CI level (D3)
 CI_RESAMPLES = 1000      # bootstrap resamples (D3)
 
@@ -202,14 +202,23 @@ def assess_confidence(
     """Compose the primitives into a full confidence assessment (spec §5.3) — shared by walk-forward, the
     regime hold-out, and single backtests. Routes to a per-trade *validation* test only when there are
     enough real, non-degenerate trades; otherwise falls to per-bar *evidence* (which never validates, R6)
-    or ``none``. The block-bootstrap CI is always computed from the in-market daily returns.
+    or ``none``.
+
+    The block-bootstrap CI (and the per-bar Sharpe) is computed on the strategy's REALIZED full-period daily
+    returns — i.e. the same series the reported ``sharpe_annual`` comes from (D8). This is deliberate and load-
+    bearing: the CI is an interval *around the reported Sharpe*, so it must be built from the same series, or it
+    could fail to even bracket the point estimate. Masking to in-market bars would need a per-bar position mask
+    the executor does not emit (``exposure_time`` is only a scalar fraction), and the "last N bars" proxy is
+    statistically wrong (it assumes contiguous end-exposure) — a wrong mask is worse than none (model-honesty).
+    For an idle low-frequency strategy the flat cash bars pull the per-bar Sharpe toward zero, which only makes
+    the per-bar *evidence* MORE conservative; it never manufactures a validating verdict (R6).
     """
     min_req = scaled_min_trades(int(train_trades), float(train_days), float(holdout_days), floor=floor, ceil=ceil)
     daily = np.asarray(daily_returns, dtype=np.float64)
     daily = daily[np.isfinite(daily)]
     n_bars_total = int(daily.size)
     exp = min(1.0, max(0.0, float(exposure_time)))
-    n_bars_im = int(round(exp * n_bars_total))                       # QF1: honest in-market count
+    n_bars_im = int(round(exp * n_bars_total))                       # exposure×bars ESTIMATE (conservative gate)
     ci_lo_raw, ci_hi_raw = block_bootstrap_sharpe_ci(daily, ppy, seed=int(seed))
 
     tr = np.asarray([x for x in (trade_returns or []) if x is not None], dtype=np.float64)
