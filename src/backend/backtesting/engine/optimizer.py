@@ -412,6 +412,7 @@ def _build_optimization_result(
         cash=config.cash,
         commission=config.commission,
         event_gate=config.event_gate,   # F1: the reported best result is gated too, matching the trials
+        compute_confidence_interval=True,  # R11: attach a Sharpe CI to the headline result (sampling precision)
     )
     best_result = run_backtest(bt_config, gates_df=_maybe_preload_gates(config))
 
