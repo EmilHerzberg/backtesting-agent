@@ -469,6 +469,31 @@ export function CandidateCard({ c, goalId, rank }: { c: Candidate; goalId: strin
               </span>
             )}
             <DecayChip decay={c.decay} />
+            {/* valconf/B3: within-regime hold-out confidence — the graded tier + an honest 90% Sharpe CI.
+                A band that straddles 0 means the edge isn't distinguishable from noise on this hold-out. */}
+            {c.holdout && (c.holdout as Record<string, unknown>).confidence_tier
+              ? (() => {
+                  const h = c.holdout as Record<string, unknown>;
+                  const num = (v: unknown) => (typeof v === "number" ? v : Number(v));
+                  const ci =
+                    h.ci_low != null && h.ci_high != null
+                      ? ` [${num(h.ci_low).toFixed(2)}, ${num(h.ci_high).toFixed(2)}]`
+                      : "";
+                  const sh = h.holdout_sharpe != null ? ` · Sh ${num(h.holdout_sharpe).toFixed(2)}` : "";
+                  return (
+                    <span
+                      className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 border border-gray-700"
+                      title={`within-regime hold-out — basis ${String(h.basis ?? "?")}, ${String(
+                        h.holdout_trades ?? "?",
+                      )} trades; 90% Sharpe CI${ci || " n/a"} (evidence, not a robustness verdict)`}
+                    >
+                      hold-out: {String(h.confidence_tier)}
+                      {sh}
+                      {ci}
+                    </span>
+                  );
+                })()
+              : null}
             {c.weaknesses && c.weaknesses.length > 0 && (
               <span
                 className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-400"
