@@ -139,3 +139,19 @@ def test_all_nan_trade_returns_are_unevaluable_not_a_per_trade_test():
     )
     assert a.basis != "per_trade"
     assert not a.validates
+
+
+@pytest.mark.finding("STATS-1")
+def test_partial_nan_trades_do_not_earn_a_false_validation_via_inflated_df():
+    """Recheck regression: NaN P&L in SOME trades must not inflate the effective sample. 10 reported, 7 NaN →
+    3 usable. The pre-fix code gated on the reported count and passed n_trades=10 to the tier, so the Student-t
+    df was 9 (bar≈1.83) instead of 2 (bar≈2.92) — a t≈2.6 on the 3 usable trades earned a FALSE MODERATE /
+    regime_validated. The fix gates on (and reports) the USABLE count, so 3 usable trades stay non-validating."""
+    tr = [0.02, 0.01, 0.005] + [float("nan")] * 7            # 3 usable, t≈2.6 (clears the WRONG df=9 bar)
+    a = assess_confidence(
+        train_trades=10, train_days=1000, holdout_days=800,   # → min_req=8; usable 3 < 8
+        test_trades=10, trade_returns=tr, daily_returns=[], exposure_time=0.0,
+        observed_sharpe=1.2, ppy=252.0, t_star=1.65, floor=5, seed=0,
+    )
+    assert a.n_trades == 3                                    # the USABLE count is reported, not the inflated 10
+    assert a.basis != "per_trade" and not a.validates         # too few real trades → no significance test, no validation

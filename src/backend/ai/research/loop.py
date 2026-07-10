@@ -486,9 +486,12 @@ def _run_regime_holdout(spec, data_agent, executor, train_end, window_end, *,
         "status": status, "confidence_tier": a.tier, "basis": a.basis,
         "holdout_period": [train_end, window_end], "holdout_trades": a.n_trades,
         "holdout_t": round(float(a.t_stat), 3), "t_star": round(float(t_star), 3),
-        # holdout_sharpe = the headline (geometric) Sharpe; observed_sharpe = the arithmetic Sharpe the CI is
-        # actually built around (spec §5.5). On the per_bar path these can differ in SIGN (Jensen), so both are
-        # surfaced — the tier's sign check keys on observed_sharpe, not the geometric headline (display honesty).
+        # holdout_sharpe = the headline (geometric/compounded) Sharpe. observed_sharpe = the Sharpe the tier's
+        # positive-edge check actually keyed on (spec §5.5): the geometric headline on the per_trade validating
+        # path (so it equals holdout_sharpe there), the ARITHMETIC daily Sharpe on the per_bar evidence path
+        # (where it can differ in SIGN from the geometric headline — Jensen). NOTE: the block-bootstrap CI is a
+        # sampling band on the ARITHMETIC Sharpe, so on the per_trade path it can sit slightly above the
+        # geometric holdout_sharpe by ~σ²·ppy/2 — that gap is display-only and never moves a verdict (D8).
         "holdout_sharpe": round(float(m.get("sharpe_annual", 0.0)), 3),
         "observed_sharpe": round(float(a.observed_sharpe), 4),
         "n_bars_in_market": a.n_bars_in_market, "min_req_trades": a.min_req_trades,
