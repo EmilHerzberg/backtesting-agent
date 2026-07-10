@@ -228,11 +228,15 @@ def assess_confidence(
     ci_lo_raw, ci_hi_raw = block_bootstrap_sharpe_ci(daily, ppy, seed=int(seed))
 
     tr = np.asarray([x for x in (trade_returns or []) if x is not None], dtype=np.float64)
-    tr = tr[np.isfinite(tr)]     # drop NaN/inf too — an all-NaN sample is UNEVALUABLE, not a per-trade test.
-    # ^ without this, np.ptp([nan,nan]) is nan (nan != 0.0 → True), so an all-NaN sample would wrongly enter the
-    #   per-trade path with t=0 → validates=False → a TERMINAL OOS FAIL. The H17/model-honesty invariant is that
-    #   "no real per-trade evidence" is UNEVALUATED (retryable), never a terminal rejection that burns budget.
-    if int(test_trades) >= min_req and tr.size >= 2 and float(np.ptp(tr)) != 0.0:
+    tr = tr[np.isfinite(tr)]     # drop NaN/inf: non-finite trade P&L is NOT real per-trade evidence.
+    n_valid = int(tr.size)       # usable per-trade observations AFTER dropping non-finite P&L
+    # Run the per-trade significance test only when BOTH the reported count and the USABLE count clear the bar,
+    # and pass n_valid (not the raw reported test_trades) as the sample size below. Two reasons:
+    #   * an all-NaN sample: np.ptp([nan,nan]) is nan (nan != 0.0 → True) would otherwise route it to per_trade
+    #     with t=0 → a TERMINAL OOS FAIL; "no real evidence" must be UNEVALUATED, never a terminal rejection (H17).
+    #   * a PARTIAL-NaN sample (e.g. 3 of 10 finite): using the reported 10 for the tier's df/STRONG_FLOOR would
+    #     inflate the effective sample → a too-low Student-t bar → a thin sample earning a FALSE validation.
+    if int(test_trades) >= min_req and n_valid >= min_req and float(np.ptp(tr)) != 0.0:
         basis, t, obs = "per_trade", _significance_t(tr), float(observed_sharpe)
     elif n_bars_im >= MIN_BARS:
         s_b, t, _ = per_bar_sharpe_and_t(daily, ppy)                  # sign check uses the per-bar Sharpe
@@ -241,10 +245,10 @@ def assess_confidence(
         basis, t, obs = "none", 0.0, float(observed_sharpe)
 
     tier = confidence_tier(basis=basis, t=t, observed_sharpe=obs,
-                           n_trades=int(test_trades), t_star=float(t_star), ci_low=ci_lo_raw)
+                           n_trades=n_valid, t_star=float(t_star), ci_low=ci_lo_raw)
     return ConfidenceAssessment(
         tier=tier, basis=basis, t_stat=round(float(t), 4), observed_sharpe=round(float(obs), 4),
-        n_trades=int(test_trades), n_bars_in_market=n_bars_im, min_req_trades=min_req,
+        n_trades=n_valid, n_bars_in_market=n_bars_im, min_req_trades=min_req,
         ci_low=round(ci_lo_raw, 4) if math.isfinite(ci_lo_raw) else None,
         ci_high=round(ci_hi_raw, 4) if math.isfinite(ci_hi_raw) else None,
     )
