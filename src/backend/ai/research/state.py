@@ -136,12 +136,18 @@ class RunArtifacts:
 
 @dataclass
 class OOSResult:
-    """OOS lockbox result — PASS/FAIL only (per spec Part 3)."""
+    """OOS lockbox result. ``outcome`` is the control verdict (PASS/FAIL/UNEVALUATED). The confidence
+    tier + Sharpe CI ride alongside as DISPLAY evidence (valconf spec §5.6, symmetric with the regime
+    hold-out); they are empty/``None`` on the recover path where no fresh assessment is available."""
 
     strategy_hash: str
     lineage_id: str
-    outcome: str  # "PASS" or "FAIL"
+    outcome: str  # "PASS" | "FAIL" | "UNEVALUATED"
     evaluated_at: str = ""
+    confidence_tier: str = ""
+    ci_low: float | None = None
+    ci_high: float | None = None
+    ci_level: float | None = None
 
 
 @dataclass

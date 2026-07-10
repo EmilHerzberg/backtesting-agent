@@ -26,12 +26,12 @@ from types import SimpleNamespace
 import pytest
 
 from src.backend.ai.research.loop import (
-    OOS_MIN_TRADES,
     VALIDATE_T,
     _env_bounds,
     _oos_verdict,
     _run_oos_lockbox,
 )
+from src.backend.backtesting.engine.confidence import VALIDATE_CEIL
 from src.backend.backtesting.lockbox.service import (
     AlreadyEvaluatedError,
     OOSLockboxService,
@@ -51,17 +51,17 @@ def _significant_returns(n: int = 30) -> list[float]:
 
 @pytest.mark.finding("H3")
 def test_thin_sample_is_unevaluated_not_fail():
-    m = {"n_trades": OOS_MIN_TRADES - 1, "trade_returns": [0.02] * (OOS_MIN_TRADES - 1),
+    m = {"n_trades": VALIDATE_CEIL - 1, "trade_returns": [0.02] * (VALIDATE_CEIL - 1),
          "total_return": 5.0, "buy_hold_return": 0.0}
     # Pre-fix a lucky positive return PASSed; the honest bar says "we don't know".
-    assert _oos_verdict(m) is OOSOutcome.UNEVALUATED
+    assert _oos_verdict(m)[0] is OOSOutcome.UNEVALUATED
 
 
 @pytest.mark.finding("H3")
 def test_significant_edge_beating_buy_hold_passes():
     m = {"n_trades": 30, "trade_returns": _significant_returns(30),
          "total_return": 0.50, "buy_hold_return": 0.10, "sharpe_annual": 1.5}
-    assert _oos_verdict(m) is OOSOutcome.PASS
+    assert _oos_verdict(m)[0] is OOSOutcome.PASS
 
 
 @pytest.mark.finding("H3")
@@ -70,7 +70,7 @@ def test_insignificant_sample_fails_even_when_positive():
     tr = [0.05 if i % 2 else -0.05 for i in range(30)]
     m = {"n_trades": 30, "trade_returns": tr, "total_return": 0.30, "buy_hold_return": 0.0,
          "sharpe_annual": 0.1}
-    assert _oos_verdict(m) is OOSOutcome.FAIL
+    assert _oos_verdict(m)[0] is OOSOutcome.FAIL
 
 
 @pytest.mark.finding("H3")
@@ -79,7 +79,7 @@ def test_significant_but_under_buy_hold_fails():
     # strategy trails a flat long → no real value added. The excess-over-buy-hold arm fails it.
     m = {"n_trades": 30, "trade_returns": _significant_returns(30),
          "total_return": 0.10, "buy_hold_return": 0.30, "sharpe_annual": 1.2}
-    assert _oos_verdict(m) is OOSOutcome.FAIL
+    assert _oos_verdict(m)[0] is OOSOutcome.FAIL
 
 
 def test_pass_bar_uses_the_validation_t_star():
@@ -97,9 +97,9 @@ def test_slow_strategy_clears_the_frequency_scaled_oos_bar():
     m = {"n_trades": 12, "trade_returns": _significant_returns(12),
          "total_return": 0.40, "buy_hold_return": 0.10, "sharpe_annual": 1.4}
     # unknown tempo → the conservative fixed ceil (20) → 12 trades is too thin → UNEVALUATED
-    assert _oos_verdict(m) is OOSOutcome.UNEVALUATED
+    assert _oos_verdict(m)[0] is OOSOutcome.UNEVALUATED
     # known slow tempo: 8 trades / 1460d projected over 2190d ≈ 12 → bar 12 → the SAME sample PASSES
-    assert _oos_verdict(m, train_trades=8, train_days=1460, oos_days=2190) is OOSOutcome.PASS
+    assert _oos_verdict(m, train_trades=8, train_days=1460, oos_days=2190)[0] is OOSOutcome.PASS
 
 
 @pytest.mark.finding("R5")
@@ -108,7 +108,7 @@ def test_scaled_bar_is_clamped_to_the_oos_floor():
     still too thin to judge → UNEVALUATED, never a lucky PASS."""
     m = {"n_trades": 6, "trade_returns": _significant_returns(6),
          "total_return": 0.40, "buy_hold_return": 0.10, "sharpe_annual": 1.4}
-    assert _oos_verdict(m, train_trades=500, train_days=1460, oos_days=2190) is OOSOutcome.UNEVALUATED
+    assert _oos_verdict(m, train_trades=500, train_days=1460, oos_days=2190)[0] is OOSOutcome.UNEVALUATED
 
 
 @pytest.mark.finding("R5")
@@ -121,7 +121,18 @@ def test_per_bar_evidence_never_manufactures_an_oos_pass():
          "total_return": 0.90, "buy_hold_return": 0.10, "sharpe_annual": 1.6,
          "returns": daily, "exposure_time": 1.0}
     # 3 trades is below any scaled bar → per-bar basis (300 in-market bars) → UNEVALUATED, never PASS.
-    assert _oos_verdict(m, train_trades=3, train_days=1460, oos_days=2190) is OOSOutcome.UNEVALUATED
+    assert _oos_verdict(m, train_trades=3, train_days=1460, oos_days=2190)[0] is OOSOutcome.UNEVALUATED
+
+
+@pytest.mark.finding("recheck-nan")
+def test_nan_trade_returns_are_unevaluated_not_terminal_fail():
+    """H17 / model-honesty at the OOS boundary: NaN trade P&L (degenerate trades — zero-size positions,
+    NaN entry price) is NOT real per-trade evidence. Before the isfinite guard it slipped the None-filter
+    (np.ptp(nan)!=0 forced basis=per_trade, t=0 → validates=False → a TERMINAL FAIL that burns OOS budget).
+    An unevaluable sample must be UNEVALUATED (retryable), never a terminal rejection."""
+    m = {"n_trades": 30, "trade_returns": [float("nan")] * 30,
+         "total_return": 0.30, "buy_hold_return": 0.05, "sharpe_annual": 1.2}
+    assert _oos_verdict(m)[0] is OOSOutcome.UNEVALUATED
 
 
 # ── H17: exception / thin sample → UNEVALUATED (no budget, no terminal row) ──
@@ -269,3 +280,23 @@ def test_reevaluation_recovers_the_stored_verdict_without_rerunning():
     assert ex.calls == 1                                        # recovery path skipped the backtest
     assert [p["outcome"] for _, p in events] == ["PASS", "PASS"]
     assert lockbox.remaining_budget(root.lineage_id) == 2       # only ONE unit ever consumed
+
+
+@pytest.mark.finding("recheck-oos-ci")
+def test_oos_result_surfaces_the_confidence_tier_and_ci_for_display():
+    # valconf §5.6: the OOS tier + Sharpe CI ride alongside the PASS/FAIL verdict for display (symmetric
+    # with the regime hold-out), instead of being computed by assess_confidence and thrown away.
+    tracker = LineageTracker()
+    root = tracker.create_root()
+    lockbox = OOSLockboxService(db_path=":memory:")
+    data_agent, spec, state, emit, events = _fixture(root.lineage_id)
+    metrics = {**_pass_metrics(), "returns": [0.01, -0.006, 0.008, -0.004] * 30, "exposure_time": 1.0}
+    _run_oos_lockbox(lockbox, SimpleNamespace(strategy_hash="hashCI"), spec, state, data_agent,
+                     _FakeExecutor(metrics), emit, tracker)
+
+    rec = state.oos_results[-1]
+    assert rec.outcome == "PASS" and rec.confidence_tier in ("strong", "moderate")
+    assert rec.ci_low is not None and rec.ci_low <= rec.ci_high     # CI surfaced, not dropped
+    # and it rides on the emitted event too (so a frontend can render it)
+    assert events[-1][1]["confidence_tier"] == rec.confidence_tier
+    assert events[-1][1]["ci_low"] == rec.ci_low
