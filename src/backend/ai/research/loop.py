@@ -22,11 +22,9 @@ import numpy as np
 
 from src.backend.ai.research.budgets import AgentBudgetController, BudgetExceededError
 from src.backend.ai.research.state import (
-    Budget,
     Candidate,
     DataSnapshot,
     FailureContext,
-    GoalBrief,
     Hypothesis,
     OOSResult,
     ResearchPhase,
@@ -266,10 +264,10 @@ def _downsample_curve(curve: Any, max_points: int = 120) -> list:
 
 # ── P2: regime forward-slice hold-out + decay helpers (REGIME-P2-HOLDOUT-SPEC v2) ────
 MIN_HOLD_DAYS = 120          # a hold-out (or decay slice) below ~4mo can't mean anything
-VALIDATE_MIN_TRADES = 20     # P2-R4: a "validated" claim needs a non-trivial sample (independent of rigor)
 VALIDATE_T = 1.65            # P2-R4: ~95% one-sided; stricter than quick/medium selection t*
 DECAY_SHARPE_FLOOR = 0.10    # M29: below this an in-regime Sharpe is too small for an honest retained-ratio
-OOS_MIN_TRADES = VALIDATE_MIN_TRADES  # D5/H3: an OOS verdict needs a real sample, else UNEVALUATED
+# NOTE: the legacy fixed-20 bar (VALIDATE_MIN_TRADES / OOS_MIN_TRADES) is gone — the trade bar is now the
+# frequency-scaled `scaled_min_trades` (ceil `confidence.VALIDATE_CEIL`=20, floors REGIME_FLOOR/OOS_FLOOR).
 
 
 def _days(a: str, b: str) -> int:
@@ -322,10 +320,12 @@ def _train_split(window_start: str, window_end: str) -> str | None:
     """P2 select-on-train: the ISO date splitting the regime window into train=[ws, split] +
     hold-out=[split, we]. Returns None when the window is too short to carve an honest hold-out
     (span < ~300d → the 4mo floor would exceed the 40% cap, P2-R2) — no split, stays UNVALIDATED
-    (P2-5). The split is set from window LENGTH only. NOTE (M27): the hold-out then requires a FIXED
-    ``VALIDATE_MIN_TRADES`` (20) to certify — there is no per-strategy trade-frequency floor here, so on a
-    short slice ``regime_validated`` is hard to reach for low-frequency templates (scaling that bar to the
-    slice length is a deferred regime-semantics decision; the observed hold-out Sharpe/t are always reported)."""
+    (P2-5). The split is set from window LENGTH only. NOTE (M27, IMPLEMENTED — valconf): the hold-out trade
+    bar is frequency-SCALED, not fixed. ``_run_regime_holdout`` passes the selection ``train_trades``/
+    ``train_days`` to ``assess_confidence`` → ``scaled_min_trades(floor=REGIME_FLOOR=5, ceil=VALIDATE_CEIL=20)``,
+    so a slow low-frequency template can earn ``regime_validated`` on as few as 5 hold-out trades. This function
+    only carves the date boundary; the scaled bar is applied downstream (the observed hold-out Sharpe/t/CI are
+    always reported regardless)."""
     span = _days(window_start, window_end)
     if span <= 0 or 0.40 * span < MIN_HOLD_DAYS:      # too short to validate honestly
         return None
@@ -486,7 +486,11 @@ def _run_regime_holdout(spec, data_agent, executor, train_end, window_end, *,
         "status": status, "confidence_tier": a.tier, "basis": a.basis,
         "holdout_period": [train_end, window_end], "holdout_trades": a.n_trades,
         "holdout_t": round(float(a.t_stat), 3), "t_star": round(float(t_star), 3),
+        # holdout_sharpe = the headline (geometric) Sharpe; observed_sharpe = the arithmetic Sharpe the CI is
+        # actually built around (spec §5.5). On the per_bar path these can differ in SIGN (Jensen), so both are
+        # surfaced — the tier's sign check keys on observed_sharpe, not the geometric headline (display honesty).
         "holdout_sharpe": round(float(m.get("sharpe_annual", 0.0)), 3),
+        "observed_sharpe": round(float(a.observed_sharpe), 4),
         "n_bars_in_market": a.n_bars_in_market, "min_req_trades": a.min_req_trades,
         "ci_low": a.ci_low, "ci_high": a.ci_high, "ci_level": a.ci_level,
     }
@@ -506,8 +510,12 @@ class _PromotionToken:
 
 
 def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
-                 oos_days: float = 0, seed: int = 0) -> Any:
+                 oos_days: float = 0, seed: int = 0) -> tuple[Any, Any]:
     """D5 / H3 + valconf/R5 — the OOS pass bar, now frequency-aware and graded.
+
+    Returns ``(OOSOutcome, ConfidenceAssessment)``: the outcome is the control verdict the lockbox/budget/goal
+    logic consumes (unchanged contract); the assessment rides alongside so its tier + CI can be SURFACED for
+    display (spec §5.6 — the same evidence the regime hold-out attaches), instead of being computed and dropped.
 
     The old bar demanded a FIXED 20 trades; here the trade bar SCALES to the strategy's IS tempo × the OOS
     window length (floor ``OOS_FLOOR``), so a slow strategy over the long OOS window isn't auto-UNEVALUATED.
@@ -529,21 +537,37 @@ def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
         floor=OOS_FLOOR, seed=int(seed),
     )
     if a.basis != "per_trade":                   # too thin for a real significance test → not a failure
-        return OOSOutcome.UNEVALUATED
+        return OOSOutcome.UNEVALUATED, a
     excess = float(m.get("total_return", 0.0)) - float(m.get("buy_hold_return", 0.0))
-    return OOSOutcome.PASS if (a.validates and excess > 0.0) else OOSOutcome.FAIL
+    outcome = OOSOutcome.PASS if (a.validates and excess > 0.0) else OOSOutcome.FAIL
+    return outcome, a
 
 
 def _record_oos(state: ResearchState, candidate: Candidate, outcome_value: str,
-                lineage_id: str, emit: Any) -> None:
-    """Append the OOS verdict to state (last-wins per hash for the trust badge) and emit it."""
-    state.oos_results.append(OOSResult(
+                lineage_id: str, emit: Any, assessment: Any = None) -> None:
+    """Append the OOS verdict to state (last-wins per hash for the trust badge) and emit it.
+
+    ``assessment`` (a ConfidenceAssessment) is the OOS evidence from this evaluation; its tier + CI ride
+    alongside the outcome for display (spec §5.6). It is ``None`` on the recover path (a prior terminal
+    verdict is replayed without re-running the backtest) — then no fresh CI is available.
+    """
+    a = assessment
+    result = OOSResult(
         strategy_hash=candidate.strategy_hash,
         lineage_id=lineage_id,
         outcome=outcome_value,
         evaluated_at=datetime.now(timezone.utc).isoformat(),
-    ))
-    emit("oos_result", {"strategy_hash": candidate.strategy_hash, "outcome": outcome_value})
+        confidence_tier=getattr(a, "tier", "") or "",
+        ci_low=getattr(a, "ci_low", None),
+        ci_high=getattr(a, "ci_high", None),
+        ci_level=getattr(a, "ci_level", None),
+    )
+    state.oos_results.append(result)
+    emit("oos_result", {
+        "strategy_hash": candidate.strategy_hash, "outcome": outcome_value,
+        "confidence_tier": result.confidence_tier, "basis": getattr(a, "basis", "") or "",
+        "ci_low": result.ci_low, "ci_high": result.ci_high, "ci_level": result.ci_level,
+    })
 
 
 def _run_oos_lockbox(
@@ -590,6 +614,10 @@ def _run_oos_lockbox(
     # Build an OOS backtest callable for the lockbox: the window runs from the IS window_end to the
     # latest available data (H15 — the live envelope, never a hardcoded literal that goes stale).
     # H17: infra failures are allowed to PROPAGATE — the lockbox maps them to UNEVALUATED, not FAIL.
+    # The lockbox callable must return a bare OOSOutcome, so we stash the assessment (tier + CI) in a
+    # closure cell to surface it via _record_oos afterwards (spec §5.6 — evidence rides alongside).
+    captured: dict[str, Any] = {}
+
     def _oos_backtest() -> Any:
         oos_start = spec.get("window_end") or _env_bounds()[0]
         oos_end = _env_bounds()[1]
@@ -600,16 +628,18 @@ def _run_oos_lockbox(
         oos_metrics = executor.run(oos_spec, oos_data, warmup_bars=oos_wb)
         # valconf/R5: scale the OOS trade bar to the IS selection tempo (candidate's IS trades over the IS
         # window span) × the OOS window length, so a slow strategy isn't auto-UNEVALUATED by a fixed bar.
-        return _oos_verdict(
+        outcome, assessment = _oos_verdict(
             oos_metrics,
             train_trades=int(getattr(candidate, "n_trades", 0) or 0),
             train_days=_days(getattr(state, "window_start", "") or "",
                              getattr(state, "window_end", "") or ""),
             oos_days=_days(oos_start, oos_end),
         )
+        captured["assessment"] = assessment
+        return outcome
 
     outcome = lockbox.evaluate(token, run_oos_backtest=_oos_backtest)
-    _record_oos(state, candidate, outcome.value, budget_lineage, emit)
+    _record_oos(state, candidate, outcome.value, budget_lineage, emit, captured.get("assessment"))
 
     if outcome is OOSOutcome.FAIL:
         logger.info("OOS FAIL for %s — terminal.", candidate.strategy_hash[:16])

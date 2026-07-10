@@ -132,6 +132,12 @@ def confidence_tier(
     consumers map to a validating status); a ``per_bar`` basis caps at ``weak``; ``strong`` clears the
     Šidák-reuse-corrected bar too (``max(STRONG_T, t_star)``, R9 monotonicity) and needs ``STRONG_FLOOR``
     trades and a positive CI lower bound.
+
+    Contract: this assumes the caller has ALREADY applied the §5.3 routing gate — a ``per_trade`` ``basis``
+    means ``test_trades >= min_req`` was cleared upstream (``assess_confidence`` is the only production caller
+    and enforces it). The function deliberately takes no ``min_req``; calling it directly with a ``per_trade``
+    basis and a sub-floor ``n_trades`` (e.g. in a test) can return ``moderate`` — that is the caller's contract
+    to uphold, not a bug in the tier logic.
     """
     ci_ok = ci_low is not None and math.isfinite(ci_low) and ci_low > 0.0
 
@@ -222,6 +228,10 @@ def assess_confidence(
     ci_lo_raw, ci_hi_raw = block_bootstrap_sharpe_ci(daily, ppy, seed=int(seed))
 
     tr = np.asarray([x for x in (trade_returns or []) if x is not None], dtype=np.float64)
+    tr = tr[np.isfinite(tr)]     # drop NaN/inf too — an all-NaN sample is UNEVALUABLE, not a per-trade test.
+    # ^ without this, np.ptp([nan,nan]) is nan (nan != 0.0 → True), so an all-NaN sample would wrongly enter the
+    #   per-trade path with t=0 → validates=False → a TERMINAL OOS FAIL. The H17/model-honesty invariant is that
+    #   "no real per-trade evidence" is UNEVALUATED (retryable), never a terminal rejection that burns budget.
     if int(test_trades) >= min_req and tr.size >= 2 and float(np.ptp(tr)) != 0.0:
         basis, t, obs = "per_trade", _significance_t(tr), float(observed_sharpe)
     elif n_bars_im >= MIN_BARS:

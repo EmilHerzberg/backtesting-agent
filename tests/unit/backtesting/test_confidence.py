@@ -124,3 +124,18 @@ def test_ci_is_computed_on_the_full_period_series_not_masked():
     # and the CI brackets the full-period Sharpe (the whole point of not masking)
     point = float(annualized_sharpe(np.asarray(daily, dtype=float), 252.0))
     assert a.ci_low <= point <= a.ci_high
+
+
+@pytest.mark.finding("recheck-nan")
+def test_all_nan_trade_returns_are_unevaluable_not_a_per_trade_test():
+    """Non-finite trade P&L (NaN/inf) must NOT slip into the per-trade path. np.ptp([nan,nan]) is nan and
+    nan != 0.0 is True, so before the isfinite filter an all-NaN sample would enter per_trade with t=0 →
+    validates=False → (at the OOS layer) a TERMINAL FAIL. An all-NaN sample is UNEVALUABLE: the basis must
+    fall to per_bar/none, never per_trade, so the honesty invariant 'no real evidence ⇒ never a FAIL' holds."""
+    a = assess_confidence(
+        train_trades=0, train_days=0, holdout_days=0, test_trades=30,
+        trade_returns=[float("nan")] * 30, daily_returns=[], exposure_time=0.0,
+        observed_sharpe=0.5, ppy=252.0, t_star=1.65, floor=5, seed=0,
+    )
+    assert a.basis != "per_trade"
+    assert not a.validates

@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 import numpy as np
 import pytest
 
 from src.backend.ai.research.loop import (
-    VALIDATE_MIN_TRADES,
     VALIDATE_T,
     _compute_regime_decay,
     _days,
@@ -311,6 +310,6 @@ def test_thin_holdout_still_reports_observed_evidence():
     r = _run_regime_holdout({}, _FakeData(), ex, "2019-01-01", "2020-06-01")
     assert r["status"] == "unvalidated"
     assert r["holdout_sharpe"] == pytest.approx(1.4)           # observed number never dropped
-    for k in ("holdout_t", "confidence_tier", "basis", "n_bars_in_market", "min_req_trades",
-              "ci_low", "ci_high", "ci_level"):
+    for k in ("holdout_t", "confidence_tier", "basis", "observed_sharpe", "n_bars_in_market",
+              "min_req_trades", "ci_low", "ci_high", "ci_level"):
         assert k in r, k

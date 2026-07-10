@@ -125,10 +125,10 @@ block_bootstrap_sharpe_ci(daily, ppy, *, level, block_len, n, seed) -> (lo, hi) 
           status = regime_validated if tier in {strong, moderate}
                  else regime_failed if tier == failed
                  else unvalidated               # 'weak' = ran but not significant → NOT validated, NOT failed
-5. EVIDENCE-ONLY PATH (too few trades):
-      elif len(daily_im) >= MIN_BARS:
-          sharpe_b, t_b, n = per_bar_sharpe_and_t(daily_im, ppy); basis = "per_bar"
-          tier = weak if (sharpe_b > 0 and ci.lo > SOME_SMALL) else inconclusive
+5. EVIDENCE-ONLY PATH (too few trades):    # D8: `daily` is the full-period realized series (no in-market mask)
+      elif n_bars_in_market >= MIN_BARS:      # exposure×bars estimate, conservative gate
+          sharpe_b, t_b, n = per_bar_sharpe_and_t(daily, ppy); basis = "per_bar"
+          tier = weak if sharpe_b > 0 else inconclusive   # per-bar tier keys on the daily-Sharpe SIGN only (no CI gate)
           status = unvalidated                  # per-bar NEVER validates (R6)
 6. else: basis="none"; tier=inconclusive; status=unvalidated
 7. return { status, confidence_tier: tier, basis, observed_sharpe: sharpe, t_stat, n_trades,
@@ -192,6 +192,7 @@ Constants live in one module block so they are auditable/tunable.
 - **D6 — DECIDED (yes):** Track A (walk-forward/backtest) ships alongside Track B; primitives built once; walk-forward first as flagship.
 - **D7 — DECIDED (keep):** `regime_failed = a real per-trade test ran and did not clear the bar (negative/collapsed)`; unchanged so M28/M49/failure-breaker/goal_met are structurally unaffected.
 - **D8 — DECIDED (Phase-Z resolution, 2026-07-08):** the CI and per-bar evidence are computed on the **realized full-period daily returns** (flat cash bars included), NOT an in-market-masked series. The v2 spec called for an `in_market_daily_returns(returns, exposure_time)` primitive; Phase-Z review showed (a) a correct mask needs a per-bar position series the executor does not emit (`exposure_time` is a scalar) — the leaf `confidence.py` only receives `(returns, exposure_time)`, and the "reconstruct from trade timestamps" precedent (`_lagged_sharpe_annual`) does not exist; (b) the "last `round(exp·len)` bars" proxy is statistically wrong (assumes contiguous end-exposure) — a wrong mask is worse than none (model-honesty); (c) **decisively**, the reported Sharpe is full-period, so the CI *must* be built on the same full-period series or it need not even bracket the point estimate. Impact of the flat bars is display-only and strictly conservative: they pull the per-bar Sharpe toward zero, never manufacturing a validating verdict (`validates` is a per-trade decision that never consults the CI/per-bar series; strong↔moderate is cosmetic since both validate). True in-market masking is a future enhancement gated on the executor emitting a per-bar exposure mask.
+  - **D8 estimator caveat (Phase-Z recheck):** the block-bootstrap CI is built on the **arithmetic** annualized Sharpe (`annualized_sharpe` = mean/std·√ppy, the natural bootstrap statistic), whereas the *headline* `holdout_sharpe`/`sharpe_annual` is the **geometric** (compounded) estimator (`benchmark_sharpe`, backtesting.py-compatible). By Jensen these differ by ≈ σ²·ppy/2 (for daily σ≈1.5%, ≈0.1 Sharpe), so the CI brackets the arithmetic point exactly and the geometric headline *approximately*. We keep the arithmetic bootstrap (the geometric estimator needs a calendar-indexed price series; block-stitched resamples have no meaningful index), and additionally surface `observed_sharpe` (the arithmetic Sharpe the CI is actually centred on) alongside the headline so the displayed CI has a matching anchor. Display-only; never affects a verdict.
 
 ---
 
