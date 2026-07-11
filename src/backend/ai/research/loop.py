@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+import zlib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Literal, Protocol
@@ -276,6 +277,18 @@ def _days(a: str, b: str) -> int:
         return (date.fromisoformat(b) - date.fromisoformat(a)).days
     except Exception:
         return 0
+
+
+def _seed_from_hash(strategy_hash: str) -> int:
+    """A stable, non-negative bootstrap seed DERIVED FROM the strategy fingerprint (valconf CI seeding).
+
+    This makes each strategy's Sharpe CI a reproducible PROPERTY OF THE STRATEGY: identical across every run
+    (never wiggles because a different run seed was chosen) and decorrelated from other strategies' draws. A
+    flat shared seed (0) is reproducible too, but couples all candidates' draws to one RNG stream; tying the
+    seed to the *run* seed would instead make the same strategy's band shift between runs — the opposite of
+    what a confidence band should do. crc32 is deterministic and JSON-safe (a uint32, well within the RNG range).
+    """
+    return int(zlib.crc32((strategy_hash or "").encode("utf-8")) & 0xFFFFFFFF)
 
 
 def _env_bounds() -> tuple[str, str]:
@@ -638,6 +651,8 @@ def _run_oos_lockbox(
             train_days=_days(getattr(state, "window_start", "") or "",
                              getattr(state, "window_end", "") or ""),
             oos_days=_days(oos_start, oos_end),
+            # valconf CI seeding: the OOS band is a reproducible property of this strategy's fingerprint.
+            seed=_seed_from_hash(getattr(candidate, "strategy_hash", "") or ""),
         )
         captured["assessment"] = assessment
         return outcome
@@ -1090,7 +1105,9 @@ async def research_loop(
                         t_star=_sidak_t_star(_ho_prior + 1),
                         # valconf/M27: the frequency-scaled bar needs the strategy's train-window tempo.
                         train_trades=int(metrics.get("n_trades", 0)),
-                        train_days=_days(getattr(state, "window_start", ""), getattr(state, "train_end", "")))
+                        train_days=_days(getattr(state, "window_start", ""), getattr(state, "train_end", "")),
+                        # valconf CI seeding: the band is a reproducible property of this strategy's fingerprint.
+                        seed=_seed_from_hash(candidate.strategy_hash))
                     if _hold.get("basis") == "per_trade":   # a REAL significance test ran → consumes a Šidák peek
                         state.holdout_eval_counts[_ho_key] = _ho_prior + 1
                         _hold["holdout_peek_index"] = _ho_prior + 1
