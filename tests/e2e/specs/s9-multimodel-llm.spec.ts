@@ -13,22 +13,30 @@ import { getReport, pollUntilTerminal, startRunApi } from "../helpers/run";
 
 const LLM_ON = process.env.E2E_LLM === "1";
 
+// REASONING models, tiered by cost (per the run decision): o3 / claude-sonnet (mid-tier reasoning, NOT the
+// $15/$75 Opus) / gemini-3-pro / deepseek-reasoner (frontier R1, cheap). Override any with E2E_<PROVIDER>_MODEL.
 const PROVIDERS = [
-  { name: "openai", type: "openai", keyEnv: "E2E_OPENAI_KEY", modelHint: /gpt-4o-mini|mini|gpt-4o/i },
-  { name: "claude", type: "anthropic", keyEnv: "E2E_ANTHROPIC_KEY", modelHint: /haiku|claude/i },
-  { name: "gemini", type: "gemini", keyEnv: "E2E_GEMINI_KEY", modelHint: /flash|gemini/i },
-  { name: "deepseek", type: "deepseek", keyEnv: "E2E_DEEPSEEK_KEY", modelHint: /deepseek-chat|chat/i },
+  { name: "openai", type: "openai", keyEnv: "E2E_OPENAI_KEY", modelEnv: "E2E_OPENAI_MODEL", defaultModel: "o3" },
+  { name: "claude", type: "anthropic", keyEnv: "E2E_ANTHROPIC_KEY", modelEnv: "E2E_ANTHROPIC_MODEL", defaultModel: "claude-sonnet-4-6" },
+  { name: "gemini", type: "gemini", keyEnv: "E2E_GEMINI_KEY", modelEnv: "E2E_GEMINI_MODEL", defaultModel: "gemini-3-pro" },
+  { name: "deepseek", type: "deepseek", keyEnv: "E2E_DEEPSEEK_KEY", modelEnv: "E2E_DEEPSEEK_MODEL", defaultModel: "deepseek-reasoner" },
 ];
+type ProviderCfg = (typeof PROVIDERS)[number];
 
 const comparison: Record<string, unknown>[] = [];
 
-async function pickModel(request: APIRequestContext, token: string, type: string, hint: RegExp): Promise<string> {
+// Resolve the model: an explicit env override wins; else the tiered reasoning default (if the catalog has it);
+// else fall back to any reasoning model the provider exposes; else the first model.
+async function pickModel(request: APIRequestContext, token: string, p: ProviderCfg): Promise<string> {
+  const override = process.env[p.modelEnv];
+  if (override) return override;
   const res = await request.get(`${BACKEND}/api/ai/models`, { headers: { Authorization: `Bearer ${token}` } });
   const models: any[] = res.ok() ? await res.json() : [];
-  const forType = models.filter((m) => String(m.provider || "").toLowerCase().includes(type));
-  expect(forType.length, `provider ${type} exposes at least one model`).toBeGreaterThan(0);
-  const chosen = forType.find((m) => hint.test(String(m.model_id || m.display_name || ""))) || forType[0];
-  return String(chosen.model_id);
+  const forType = models.filter((m) => String(m.provider || "").toLowerCase() === p.type);
+  expect(forType.length, `provider ${p.type} exposes at least one model`).toBeGreaterThan(0);
+  if (forType.some((m) => m.model_id === p.defaultModel)) return p.defaultModel;
+  const reasoning = forType.find((m) => m.supports_reasoning);
+  return String((reasoning || forType[0]).model_id);
 }
 
 test.describe("S9 — multi-model full_ai comparison (paid, gated)", () => {
@@ -57,7 +65,7 @@ test.describe("S9 — multi-model full_ai comparison (paid, gated)", () => {
       });
       expect(cr.ok(), `configure ${p.name} -> ${cr.status()}: ${await cr.text()}`).toBeTruthy();
 
-      const model = await pickModel(request, token, p.type, p.modelHint);
+      const model = await pickModel(request, token, p);
 
       // A small full_ai run — the LLM Strategist proposes, the LLM Critic reviews, the LLM Reporter writes.
       // Hard-capped at max_eur so it cannot overrun.
@@ -126,7 +134,7 @@ test.describe("S9 — multi-model full_ai comparison (paid, gated)", () => {
       headers: authHdr,
       data: { name: `${p!.name}-pause`, provider_type: p!.type, api_key: process.env[p!.keyEnv] },
     });
-    const model = await pickModel(request, token, p!.type, p!.modelHint);
+    const model = await pickModel(request, token, p!);
     const goalId = await startRunApi(request, token, {
       goal_text: "mean reversion on staples", asset_pool: ["KO", "PG", "JNJ", "XOM"],
       strategy_families: ["mean_reversion", "trend_following"], agent_mode: "full_ai", provider: p!.type,
