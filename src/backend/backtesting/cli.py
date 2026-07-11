@@ -365,7 +365,6 @@ def run_pipeline(
                         n_trials_per_window=config.optuna.n_trials,
                         cash=config.cash,
                         commission=commission,
-                        validation_threshold=config.walk_forward.validation_threshold,
                         # M10-CLI: forward the user's optuna objective/weights so per-window optimization
                         # targets what the YAML asked for (was silently dropped here → default composite,
                         # while windows were scored on test Sharpe — the exact M10 inconsistency).

@@ -56,7 +56,7 @@ walk_forward:
   train_size: "12m"
   test_size: "3m"
   step: "3m"
-  validation_threshold: 0.0
+  # window validity is a frequency-aware per-trade significance decision (R10/valconf), not a Sharpe threshold
 
 output:
   save_results: true
