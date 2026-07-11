@@ -1,12 +1,16 @@
 {
-  "name": "ai-investment-e2e",
+  "name": "backtesting-agent-e2e",
   "version": "1.0.0",
   "private": true,
-  "description": "Browser-level smoke tests against deployed instances.",
+  "description": "Scenario end-to-end tests (Playwright) driving the real running stack.",
   "scripts": {
-    "sim-history": "node sim-history.spec.js"
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report",
+    "install-browser": "playwright install chromium"
   },
   "devDependencies": {
-    "playwright": "^1.59.1"
+    "@playwright/test": "^1.59.1"
   }
 }

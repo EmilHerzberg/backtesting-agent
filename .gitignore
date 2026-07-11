@@ -35,6 +35,11 @@ node_modules/
 .turbo/
 *.tsbuildinfo
 
+# Playwright E2E artifacts
+tests/e2e/test-results/
+tests/e2e/playwright-report/
+tests/e2e/.last-run.json
+
 # user-generated outputs — anchored to repo root so these do NOT match the
 # `src/backend/backtesting/results` source package or the frontend
 # `dashboard/research/runs` route pages.
