@@ -80,7 +80,7 @@ export default function NewRunPage() {
 
   const [showKeyGate, setShowKeyGate] = useState(false);  // F-3: AI mode without a key
   const [stage, setStage] = useState<"config" | "preview">("config");
-  const [, setPreview] = useState<ScopePreview | null>(null);
+  const [preview, setPreview] = useState<ScopePreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -231,6 +231,41 @@ export default function NewRunPage() {
           <Row label="AI mode" value={`${AI_MODES[agentMode].label}${agentMode !== "rule_based" ? ` · ${modelId}` : ""} — ${AI_MODES[agentMode].hint}`} />
           <Row label="Est. cost" value={estimateLabel(agentMode as AgentMode, estimate, MAX_EUR)} />
         </div>
+        {/* Backend's interpretation of the free-text goal — the actual symbol/strategy pool it parsed, and
+            its own scope estimate. This can differ from the structured inputs above, so surface it before launch. */}
+        {preview && (
+          <div className="rounded border border-blue-900/60 bg-blue-950/20 p-4 text-sm space-y-2">
+            <div className="text-[11px] uppercase font-semibold tracking-wide text-blue-300">
+              How the agent read your goal
+            </div>
+            <Row
+              label="Symbol pool"
+              value={preview.interpreted.symbol_pool.length ? preview.interpreted.symbol_pool.join(", ") : "—"}
+            />
+            <Row
+              label="Strategy pool"
+              value={
+                preview.interpreted.strategy_pool.length
+                  ? preview.interpreted.strategy_pool.map((s) => s.replace(/_/g, "-")).join(", ")
+                  : "—"
+              }
+            />
+            <Row
+              label="Interpreted scope"
+              value={`~${preview.cost.runs} backtests · ~${Math.max(1, Math.round(preview.cost.duration_seconds / 60))} min`}
+            />
+            {Object.keys(preview.source_annotations || {}).length > 0 && (
+              <div className="text-[11px] text-gray-500">
+                {Object.entries(preview.source_annotations).map(([k, v]) => (
+                  <span key={k} className="mr-3">
+                    <span className="text-gray-400">{k}</span>: {v}
+                  </span>
+                ))}
+              </div>
+            )}
+            {preview.notes && <div className="text-[11px] text-gray-500">{preview.notes}</div>}
+          </div>
+        )}
         <div className="rounded border border-gray-800 bg-gray-950 p-4 text-[12px] space-y-2">
           <div>
             <span className="text-green-400 font-semibold">This run WILL:</span>{" "}
