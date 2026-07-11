@@ -79,21 +79,24 @@ skipped. The whole scenario is gated behind `E2E_LLM=1` so it never runs unatten
 A `full_ai` run makes: `max_runs` Strategist calls + (gate-pass-rate × `max_runs`) Critic calls + 1 Reporter call
 (token sizes calibrated in `frontend/src/lib/research/cost.ts`: strat ~700p/200c, critic ~1100p/200c, report ~700p/200c).
 
-For **max_runs = 5, standard rigor** (gate-pass ≈ 0.15 → ~0.75 Critic calls):
+S9 uses **REASONING models** (the AI mode's real value), tiered by cost — mid-tier reasoning for the pricey
+providers (NOT the frontier Opus/GPT-5), the frontier reasoner for DeepSeek. Reasoning models emit far more
+output (hidden CoT), so the per-run cost is higher than a chat model but still small; each run is hard-capped
+at the request's `max_eur`, so it cannot overrun. For **max_runs = 5, exploratory** (~7.5 LLM calls/run):
 
-| Model (example) | ~input €/1M | ~output €/1M | **Est. run cost** |
+| Provider | Default model (override via `E2E_<P>_MODEL`) | $/1M in·out | **Est. run cost** |
 |---|---|---|---|
-| gpt-4o-mini | 0.15 | 0.60 | **≈ €0.002** |
-| deepseek-chat | 0.13 | 0.26 | **≈ €0.001** |
-| claude-haiku-class | ~0.70 | ~3.50 | **≈ €0.01** |
-| a frontier model (gpt-4o / sonnet-class) | ~2.5 | ~10 | **≈ €0.03–0.05** |
+| DeepSeek | `deepseek-reasoner` (frontier R1) | 0.28 · 0.42 | **≈ €0.01** |
+| OpenAI | `o3` (reasoning; not gpt-5) | 2 · 8 | **≈ €0.12** |
+| Gemini | `gemini-3-pro` (reasoning) | 2 · 12 | **≈ €0.17** |
+| Claude | `claude-sonnet-4-6` (mid-tier reasoning; not Opus @ 15/75) | 3 · 15 | **≈ €0.22** |
 
-→ **Even on a frontier model a single S9 run is a few cents.** The run is also hard-capped at the request's
-`max_eur` budget, so it cannot overrun. I will confirm the exact figure for the chosen model before running,
-and the run stops at the cap regardless.
+→ **All four + the pause/resume run ≈ €0.5–0.75 total.** Hard-capped per run at `max_eur` (=1.0). Exact figures
+depend on how much each model "thinks"; I confirm before running.
 
-**S9 needs from you:** (a) which provider + model to use, (b) a real API key for it (set as an env var at test
-time, or pre-configured on a test account), (c) go-ahead on the (few-cents) spend.
+**S9 needs from you:** a real API key per provider (env vars `E2E_OPENAI_KEY` / `E2E_ANTHROPIC_KEY` /
+`E2E_GEMINI_KEY` / `E2E_DEEPSEEK_KEY`), and go-ahead on the ~€0.5 spend. Any model can be swapped via
+`E2E_OPENAI_MODEL` etc.
 
 ## 5. CI integration
 
