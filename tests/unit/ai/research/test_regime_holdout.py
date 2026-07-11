@@ -12,6 +12,7 @@ from src.backend.ai.research.loop import (
     _compute_regime_decay,
     _days,
     _run_regime_holdout,
+    _seed_from_hash,
     _sidak_t_star,
     _train_split,
 )
@@ -313,3 +314,24 @@ def test_thin_holdout_still_reports_observed_evidence():
     for k in ("holdout_t", "confidence_tier", "basis", "observed_sharpe", "n_bars_in_market",
               "min_req_trades", "ci_low", "ci_high", "ci_level"):
         assert k in r, k
+
+
+@pytest.mark.finding("valconf-ci-seed")
+def test_seed_from_hash_is_deterministic_and_decorrelated():
+    """valconf CI seeding: the bootstrap seed is a STABLE function of the strategy fingerprint — same hash →
+    same seed (the band is reproducible across runs, not tied to a run seed), different hashes → different
+    seeds (each strategy's draws are decorrelated). No crash on empty; a valid non-negative RNG seed."""
+    assert _seed_from_hash("abc123") == _seed_from_hash("abc123")        # deterministic
+    assert _seed_from_hash("abc123") != _seed_from_hash("def456")        # decorrelated across strategies
+    assert _seed_from_hash("") == _seed_from_hash("")                     # empty is stable, not a crash
+    s = _seed_from_hash("deadbeef")
+    assert isinstance(s, int) and 0 <= s <= 0xFFFFFFFF                    # a valid non-negative RNG seed
+
+    # and it genuinely drives the CI: two fingerprints → different bands, each reproducible.
+    from src.backend.backtesting.engine.confidence import block_bootstrap_sharpe_ci
+    rng = np.random.default_rng(1)
+    daily = list(rng.normal(0.001, 0.01, 60))
+    ci_a = block_bootstrap_sharpe_ci(daily, 252.0, seed=_seed_from_hash("stratA"))
+    ci_b = block_bootstrap_sharpe_ci(daily, 252.0, seed=_seed_from_hash("stratB"))
+    assert ci_a != ci_b                                                  # different fingerprints → different draws
+    assert ci_a == block_bootstrap_sharpe_ci(daily, 252.0, seed=_seed_from_hash("stratA"))  # reproducible
