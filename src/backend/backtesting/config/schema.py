@@ -63,7 +63,6 @@ class WalkForwardYaml(BaseModel):
     train_size: str = "12m"
     test_size: str = "3m"
     step: str = "3m"
-    validation_threshold: float = 0.0
 
 
 class OutputConfig(BaseModel):

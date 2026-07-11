@@ -103,12 +103,30 @@ def test_slow_strategy_clears_the_frequency_scaled_oos_bar():
 
 
 @pytest.mark.finding("R5")
-def test_scaled_bar_is_clamped_to_the_oos_floor():
-    """Even a very fast IS tempo cannot drop the OOS bar below OOS_FLOOR (10): a 6-trade OOS sample is
-    still too thin to judge → UNEVALUATED, never a lucky PASS."""
+def test_fast_tempo_scales_the_oos_bar_up_to_the_ceil():
+    """A very fast IS tempo projects far ABOVE the ceil, so the bar clamps DOWN to VALIDATE_CEIL (20): a
+    6-trade OOS sample is well below 20 → too thin → UNEVALUATED, never a lucky PASS. (The FLOOR-clamp branch
+    is covered separately by test_slow_tempo_scales_the_oos_bar_up_to_the_floor.)"""
     m = {"n_trades": 6, "trade_returns": _significant_returns(6),
          "total_return": 0.40, "buy_hold_return": 0.10, "sharpe_annual": 1.4}
+    # 500 trades / 1460d projected over 2190d ≈ 749 → clamped DOWN to ceil 20; 6 < 20 → UNEVALUATED
     assert _oos_verdict(m, train_trades=500, train_days=1460, oos_days=2190)[0] is OOSOutcome.UNEVALUATED
+
+
+@pytest.mark.finding("R5")
+def test_slow_tempo_scales_the_oos_bar_up_to_the_floor():
+    """A very slow IS tempo projects FAR BELOW OOS_FLOOR (10), and the bar clamps UP to the floor — this is
+    the max(OOS_FLOOR, ...) branch the ceil test above never exercises. So a 9-trade OOS sample is still too
+    thin (9 < 10 → UNEVALUATED) even though it far exceeds the ~1.5 projected count, while a 10-trade
+    significant sample clears the floor (PASS). A regression that dropped OOS_FLOOR (or wired the OOS call to
+    REGIME_FLOOR=5) would let those 3–9-trade samples evaluate — this test catches it."""
+    slow = dict(train_trades=1, train_days=1460, oos_days=2190)      # projected ≈ 1.5 → bar clamps UP to 10
+    thin = {"n_trades": 9, "trade_returns": _significant_returns(9),
+            "total_return": 0.40, "buy_hold_return": 0.10, "sharpe_annual": 1.4}
+    assert _oos_verdict(thin, **slow)[0] is OOSOutcome.UNEVALUATED    # 9 < OOS_FLOOR=10 → still too thin
+    at_floor = {"n_trades": 10, "trade_returns": _significant_returns(10),
+                "total_return": 0.40, "buy_hold_return": 0.10, "sharpe_annual": 1.4}
+    assert _oos_verdict(at_floor, **slow)[0] is OOSOutcome.PASS       # 10 == OOS_FLOOR → a real verdict
 
 
 @pytest.mark.finding("R5")

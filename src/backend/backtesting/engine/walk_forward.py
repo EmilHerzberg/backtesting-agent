@@ -45,8 +45,6 @@ class WalkForwardConfig:
         n_trials_per_window: Optuna trials per training window.
         cash: Starting cash for each window.
         commission: Per-trade commission fraction.
-        validation_threshold: Minimum test-window Sharpe ratio to count a
-            window as "valid".
     """
 
     strategy_class: type
@@ -57,7 +55,6 @@ class WalkForwardConfig:
     n_trials_per_window: int = 50
     cash: float = 10_000.0
     commission: float = 0.001
-    validation_threshold: float = 0.0
     # M10: forward the user's optuna settings to per-window optimization (was default composite/TPE only,
     # while windows were then SCORED on test Sharpe — an internal inconsistency).
     objective_metric: str = "composite"
@@ -87,7 +84,9 @@ class WalkForwardWindow:
             means less over-fitting. M11: ``NaN`` when the train Sharpe is not
             materially positive (the ratio is meaningless there); such windows
             are excluded from the aggregate median.
-        is_valid: Whether the test Sharpe exceeds the validation threshold.
+        is_valid: Whether this window's confidence tier is strong/moderate — a
+            real frequency-aware per-trade significance decision (R10). Replaced
+            the old ``test_sharpe > validation_threshold`` binary bar.
     """
 
     window_index: int
