@@ -486,6 +486,7 @@ def _run_regime_holdout(spec, data_agent, executor, train_end, window_end, *,
         daily_returns=m.get("returns", []), exposure_time=float(m.get("exposure_time", 0.0) or 0.0),
         observed_sharpe=float(m.get("sharpe_annual", 0.0)), ppy=252.0, t_star=float(t_star),
         floor=REGIME_FLOOR, seed=int(seed),
+        in_market_returns=m.get("returns_in_market"),   # valconf: edge-when-deployed Sharpe + CI
     )
     # tier → control status (§6). Only a per-trade strong/moderate VALIDATES; a real per-trade collapse
     # (negative/failed) is regime_failed; per-bar/weak/inconclusive stay unvalidated (per-bar never certifies).
@@ -509,6 +510,9 @@ def _run_regime_holdout(spec, data_agent, executor, train_end, window_end, *,
         "observed_sharpe": round(float(a.observed_sharpe), 4),
         "n_bars_in_market": a.n_bars_in_market, "min_req_trades": a.min_req_trades,
         "ci_low": a.ci_low, "ci_high": a.ci_high, "ci_level": a.ci_level,
+        # valconf in-market masking: the edge WHILE DEPLOYED (cash days excluded), same scale as holdout_sharpe.
+        "in_market_sharpe": a.in_market_sharpe,
+        "in_market_ci_low": a.in_market_ci_low, "in_market_ci_high": a.in_market_ci_high,
     }
 
 
@@ -551,6 +555,7 @@ def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
         daily_returns=m.get("returns", []), exposure_time=float(m.get("exposure_time", 0.0) or 0.0),
         observed_sharpe=float(m.get("sharpe_annual", 0.0)), ppy=252.0, t_star=VALIDATE_T,
         floor=OOS_FLOOR, seed=int(seed),
+        in_market_returns=m.get("returns_in_market"),   # valconf: edge-when-deployed Sharpe + CI
     )
     if a.basis != "per_trade":                   # too thin for a real significance test → not a failure
         return OOSOutcome.UNEVALUATED, a
@@ -578,12 +583,17 @@ def _record_oos(state: ResearchState, candidate: Candidate, outcome_value: str,
         ci_low=getattr(a, "ci_low", None),
         ci_high=getattr(a, "ci_high", None),
         ci_level=getattr(a, "ci_level", None),
+        in_market_sharpe=getattr(a, "in_market_sharpe", None),
+        in_market_ci_low=getattr(a, "in_market_ci_low", None),
+        in_market_ci_high=getattr(a, "in_market_ci_high", None),
     )
     state.oos_results.append(result)
     emit("oos_result", {
         "strategy_hash": candidate.strategy_hash, "outcome": outcome_value,
         "confidence_tier": result.confidence_tier, "basis": result.basis,
         "ci_low": result.ci_low, "ci_high": result.ci_high, "ci_level": result.ci_level,
+        "in_market_sharpe": result.in_market_sharpe,
+        "in_market_ci_low": result.in_market_ci_low, "in_market_ci_high": result.in_market_ci_high,
     })
 
 

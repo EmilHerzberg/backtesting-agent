@@ -35,6 +35,7 @@ async def test_oos_ci_is_surfaced_on_the_candidate_response():
     oos = OOSResult(
         strategy_hash="h1", lineage_id="l", outcome="PASS",
         confidence_tier="moderate", basis="per_trade", ci_low=0.30, ci_high=1.80, ci_level=0.90,
+        in_market_sharpe=1.24, in_market_ci_low=0.78, in_market_ci_high=1.90,
     )
     research_router._runs["g1"] = RunRecord(goal_id="g1", user_id=uid, state=_state_with(["h1"], [oos]))
     try:
@@ -48,6 +49,9 @@ async def test_oos_ci_is_surfaced_on_the_candidate_response():
     assert c.oos["confidence_tier"] == "moderate"                  # … with the tier + CI riding alongside
     assert c.oos["basis"] == "per_trade"
     assert (c.oos["ci_low"], c.oos["ci_high"], c.oos["ci_level"]) == (0.30, 1.80, 0.90)
+    # valconf in-market masking: the edge-when-deployed Sharpe + CI ride along too
+    assert c.oos["in_market_sharpe"] == 1.24
+    assert (c.oos["in_market_ci_low"], c.oos["in_market_ci_high"]) == (0.78, 1.90)
 
 
 @pytest.mark.finding("valconf-oos-chip")

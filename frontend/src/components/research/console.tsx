@@ -480,16 +480,25 @@ export function CandidateCard({ c, goalId, rank }: { c: Candidate; goalId: strin
                       ? ` [${num(h.ci_low).toFixed(2)}, ${num(h.ci_high).toFixed(2)}]`
                       : "";
                   const sh = h.holdout_sharpe != null ? ` · Sh ${num(h.holdout_sharpe).toFixed(2)}` : "";
+                  // valconf in-market masking: the edge WHILE DEPLOYED (cash days excluded), same scale as Sh.
+                  const imCi =
+                    h.in_market_ci_low != null && h.in_market_ci_high != null
+                      ? ` [${num(h.in_market_ci_low).toFixed(2)}, ${num(h.in_market_ci_high).toFixed(2)}]`
+                      : "";
+                  const im =
+                    h.in_market_sharpe != null ? ` · deployed ${num(h.in_market_sharpe).toFixed(2)}${imCi}` : "";
                   return (
                     <span
                       className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 border border-gray-700"
                       title={`within-regime hold-out — basis ${String(h.basis ?? "?")}, ${String(
                         h.holdout_trades ?? "?",
-                      )} trades; 90% Sharpe CI${ci || " n/a"} (evidence, not a robustness verdict)`}
+                      )} trades; 90% Sharpe CI${ci || " n/a"}. "deployed" = the edge on in-market days only ` +
+                        `(cash days excluded), same scale as Sh. Evidence, not a robustness verdict.`}
                     >
                       hold-out: {String(h.confidence_tier)}
                       {sh}
                       {ci}
+                      {im}
                     </span>
                   );
                 })()
@@ -521,15 +530,24 @@ export function CandidateCard({ c, goalId, rank }: { c: Candidate; goalId: strin
                     o.ci_low != null && o.ci_high != null
                       ? ` [${num(o.ci_low).toFixed(2)}, ${num(o.ci_high).toFixed(2)}]`
                       : "";
+                  // valconf in-market masking: the OOS edge WHILE DEPLOYED (cash days excluded).
+                  const imCi =
+                    o.in_market_ci_low != null && o.in_market_ci_high != null
+                      ? ` [${num(o.in_market_ci_low).toFixed(2)}, ${num(o.in_market_ci_high).toFixed(2)}]`
+                      : "";
+                  const im =
+                    o.in_market_sharpe != null ? ` · deployed ${num(o.in_market_sharpe).toFixed(2)}${imCi}` : "";
                   return (
                     <span
                       className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 border border-gray-700"
                       title={`OOS lockbox — basis ${String(o.basis ?? "?")}; 90% Sharpe CI${
                         ci || " n/a"
-                      } (evidence, not a second robustness verdict)`}
+                      }. "deployed" = the edge on in-market days only (cash days excluded), same scale. ` +
+                        `Evidence, not a second robustness verdict.`}
                     >
                       oos: {String(o.confidence_tier)}
                       {ci}
+                      {im}
                     </span>
                   );
                 })()

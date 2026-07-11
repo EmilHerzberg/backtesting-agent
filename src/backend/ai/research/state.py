@@ -149,6 +149,10 @@ class OOSResult:
     ci_low: float | None = None
     ci_high: float | None = None
     ci_level: float | None = None
+    # valconf in-market masking: the edge WHILE DEPLOYED (cash days excluded) — additive display evidence.
+    in_market_sharpe: float | None = None
+    in_market_ci_low: float | None = None
+    in_market_ci_high: float | None = None
 
 
 @dataclass
