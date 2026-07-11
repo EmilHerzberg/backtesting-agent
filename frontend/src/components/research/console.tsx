@@ -666,10 +666,12 @@ export function NotLivePanel({ goalId }: { goalId: string }) {
         This run is no longer live. Open its durable record:
       </div>
       <div className="flex gap-2">
-        {["report", "candidates", "graveyard"].map((seg) => (
+        {/* only the durable, standalone pages that survive eviction (candidates render inline on the
+            live console, which no longer exists here — there is no candidates-list route to link to). */}
+        {["report", "lineage", "graveyard"].map((seg) => (
           <Link
             key={seg}
-            href={`/dashboard/research/runs/${goalId}/${seg === "candidates" ? "" : seg}`}
+            href={`/dashboard/research/runs/${goalId}/${seg}`}
             className="px-3 py-1.5 rounded text-sm bg-gray-800 hover:bg-gray-700 text-gray-200 capitalize"
           >
             {seg}

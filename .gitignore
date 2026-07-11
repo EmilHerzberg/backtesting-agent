@@ -33,6 +33,7 @@ htmlcov/
 node_modules/
 .next/
 .turbo/
+*.tsbuildinfo
 
 # user-generated outputs — anchored to repo root so these do NOT match the
 # `src/backend/backtesting/results` source package or the frontend
