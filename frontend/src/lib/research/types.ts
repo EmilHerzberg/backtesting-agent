@@ -50,6 +50,7 @@ export interface Candidate {
   n_trades: number;
   critic_confidence: string;
   oos_outcome: string; // PASS | FAIL | PENDING
+  oos?: Record<string, unknown>; // valconf §5.6 — OOS confidence tier + Sharpe CI (evidence beside the verdict)
   validation_status?: string; // P1 Chunk C — "unvalidated" for regime, "" robustness
   confidence?: string; // F-13 unified confidence (regime)
   decay?: Record<string, unknown>; // C2 — out-of-regime decay (P2-4: before/after slices)

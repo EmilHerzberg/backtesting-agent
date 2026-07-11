@@ -510,6 +510,30 @@ export function CandidateCard({ c, goalId, rank }: { c: Candidate; goalId: strin
             <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${OOS_BADGE[c.oos_outcome] || OOS_BADGE.PENDING}`}>
               OOS {c.oos_outcome === "PENDING" ? "…" : c.oos_outcome}
             </span>
+            {/* valconf/B2 §5.6: OOS lockbox evidence — the graded tier + an honest 90% Sharpe CI riding beside
+                the PASS/FAIL/UNEVALUATED verdict. A band that straddles 0 means the edge isn't distinguishable
+                from noise on the out-of-sample window (evidence, not a second verdict). */}
+            {c.oos && (c.oos as Record<string, unknown>).confidence_tier
+              ? (() => {
+                  const o = c.oos as Record<string, unknown>;
+                  const num = (v: unknown) => (typeof v === "number" ? v : Number(v));
+                  const ci =
+                    o.ci_low != null && o.ci_high != null
+                      ? ` [${num(o.ci_low).toFixed(2)}, ${num(o.ci_high).toFixed(2)}]`
+                      : "";
+                  return (
+                    <span
+                      className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 border border-gray-700"
+                      title={`OOS lockbox — basis ${String(o.basis ?? "?")}; 90% Sharpe CI${
+                        ci || " n/a"
+                      } (evidence, not a second robustness verdict)`}
+                    >
+                      oos: {String(o.confidence_tier)}
+                      {ci}
+                    </span>
+                  );
+                })()
+              : null}
             <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
               conf: {c.critic_confidence}
             </span>

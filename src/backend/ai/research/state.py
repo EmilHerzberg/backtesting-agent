@@ -145,6 +145,7 @@ class OOSResult:
     outcome: str  # "PASS" | "FAIL" | "UNEVALUATED"
     evaluated_at: str = ""
     confidence_tier: str = ""
+    basis: str = ""            # "per_trade" | "per_bar" | "none" — how the OOS verdict was assessed
     ci_low: float | None = None
     ci_high: float | None = None
     ci_level: float | None = None

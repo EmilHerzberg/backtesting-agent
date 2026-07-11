@@ -561,6 +561,7 @@ def _record_oos(state: ResearchState, candidate: Candidate, outcome_value: str,
         outcome=outcome_value,
         evaluated_at=datetime.now(timezone.utc).isoformat(),
         confidence_tier=getattr(a, "tier", "") or "",
+        basis=getattr(a, "basis", "") or "",
         ci_low=getattr(a, "ci_low", None),
         ci_high=getattr(a, "ci_high", None),
         ci_level=getattr(a, "ci_level", None),
@@ -568,7 +569,7 @@ def _record_oos(state: ResearchState, candidate: Candidate, outcome_value: str,
     state.oos_results.append(result)
     emit("oos_result", {
         "strategy_hash": candidate.strategy_hash, "outcome": outcome_value,
-        "confidence_tier": result.confidence_tier, "basis": getattr(a, "basis", "") or "",
+        "confidence_tier": result.confidence_tier, "basis": result.basis,
         "ci_low": result.ci_low, "ci_high": result.ci_high, "ci_level": result.ci_level,
     })
 

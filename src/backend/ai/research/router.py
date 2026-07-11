@@ -169,6 +169,7 @@ class CandidateResponse(BaseModel):
     n_trades: int
     critic_confidence: str
     oos_outcome: str = "PENDING"  # A-6: PASS|FAIL|PENDING — the trust badge
+    oos: dict[str, Any] = {}      # valconf §5.6 — OOS confidence tier + Sharpe CI (evidence beside the verdict)
     validation_status: str = ""   # P1 Chunk C — regime firewall ("unvalidated" for regime, "" robustness)
     confidence: str = ""          # F-13 unified confidence (regime)
     decay: dict[str, Any] = {}    # C2 — out-of-regime decay characterization (regime)
@@ -701,10 +702,18 @@ async def get_run_candidates(
 
     rec = _runs.get(goal_id)
     if rec is not None and rec.user_id == user_id and rec.state is not None:
-        oos_map = {o.strategy_hash: o.outcome for o in rec.state.oos_results}
+        oos_map = {o.strategy_hash: o for o in rec.state.oos_results}
         out = []
         for c in rec.state.candidates:
-            _oos = oos_map.get(c.strategy_hash, "PENDING")
+            _oos_res = oos_map.get(c.strategy_hash)
+            _oos = _oos_res.outcome if _oos_res is not None else "PENDING"
+            # valconf §5.6: surface the OOS tier + CI as evidence beside the verdict (only when a fresh
+            # assessment produced a tier — the recover path leaves it empty, so no chip is shown there).
+            _oos_dict = {
+                "outcome": _oos_res.outcome, "confidence_tier": _oos_res.confidence_tier,
+                "basis": _oos_res.basis, "ci_low": _oos_res.ci_low,
+                "ci_high": _oos_res.ci_high, "ci_level": _oos_res.ci_level,
+            } if _oos_res is not None and _oos_res.confidence_tier else {}
             _vs = getattr(c, "validation_status", "")
             _wk = getattr(c, "weaknesses", []) or []
             out.append(CandidateResponse(
@@ -718,6 +727,7 @@ async def get_run_candidates(
                 n_trades=c.n_trades,
                 critic_confidence=c.critic_confidence,
                 oos_outcome=_oos,
+                oos=_oos_dict,
                 validation_status=_vs,
                 confidence=getattr(c, "confidence", ""),
                 decay=getattr(c, "decay", {}) or {},
