@@ -191,6 +191,13 @@ class ConfidenceAssessment:
     ci_low: float | None
     ci_high: float | None
     ci_level: float = CI_LEVEL
+    # valconf in-market masking: the strategy's edge WHILE DEPLOYED — annualized Sharpe + block-bootstrap CI
+    # on the in-market days only (flat cash days excluded), on the SAME √ppy scale as observed_sharpe so the
+    # two are directly comparable. All ``None`` when no in-market series was supplied or it is too thin. This
+    # is additive DISPLAY evidence; it never changes a verdict (``validates`` is unchanged).
+    in_market_sharpe: float | None = None
+    in_market_ci_low: float | None = None
+    in_market_ci_high: float | None = None
 
     @property
     def validates(self) -> bool:
@@ -204,6 +211,7 @@ def assess_confidence(
     test_trades: int, trade_returns, daily_returns, exposure_time: float,
     observed_sharpe: float, ppy: float, t_star: float,
     floor: int, ceil: int = VALIDATE_CEIL, seed: int = 0,
+    in_market_returns=None,
 ) -> ConfidenceAssessment:
     """Compose the primitives into a full confidence assessment (spec §5.3) — shared by walk-forward, the
     regime hold-out, and single backtests. Routes to a per-trade *validation* test only when there are
@@ -246,9 +254,25 @@ def assess_confidence(
 
     tier = confidence_tier(basis=basis, t=t, observed_sharpe=obs,
                            n_trades=n_valid, t_star=float(t_star), ci_low=ci_lo_raw)
+
+    # valconf in-market masking (additive, display-only): the edge WHILE DEPLOYED — Sharpe + CI on the
+    # in-market days only, same √ppy scale as observed_sharpe. `None` when no series was supplied or it is
+    # too thin/degenerate (an honest absence, never a fabricated number). Uses the same seed as the
+    # full-period CI (different data → independent draws), so it is reproducible per strategy (enh #2).
+    im = np.asarray(in_market_returns if in_market_returns is not None else [], dtype=np.float64)
+    im = im[np.isfinite(im)]
+    im_sharpe = im_ci_lo = im_ci_hi = None
+    if im.size >= MIN_BARS and float(np.ptp(im)) != 0.0:
+        _s = float(annualized_sharpe(im, ppy))
+        _lo, _hi = block_bootstrap_sharpe_ci(im, ppy, seed=int(seed))
+        im_sharpe = round(_s, 4) if math.isfinite(_s) else None
+        im_ci_lo = round(_lo, 4) if math.isfinite(_lo) else None
+        im_ci_hi = round(_hi, 4) if math.isfinite(_hi) else None
+
     return ConfidenceAssessment(
         tier=tier, basis=basis, t_stat=round(float(t), 4), observed_sharpe=round(float(obs), 4),
         n_trades=n_valid, n_bars_in_market=n_bars_im, min_req_trades=min_req,
         ci_low=round(ci_lo_raw, 4) if math.isfinite(ci_lo_raw) else None,
         ci_high=round(ci_hi_raw, 4) if math.isfinite(ci_hi_raw) else None,
+        in_market_sharpe=im_sharpe, in_market_ci_low=im_ci_lo, in_market_ci_high=im_ci_hi,
     )

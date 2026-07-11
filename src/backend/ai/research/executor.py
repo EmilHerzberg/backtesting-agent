@@ -84,6 +84,40 @@ def _lagged_sharpe_annual(
         return None
 
 
+def _in_market_returns(data: pd.DataFrame, trades: list, warmup_bars: int, returns: np.ndarray) -> np.ndarray:
+    """valconf (in-market masking) — the subset of daily ``returns`` on the bars the strategy actually HELD a
+    position, reconstructed from the trades (same held-position logic as ``_lagged_sharpe_annual``).
+
+    This is what lets us report the strategy's edge quality *while deployed* (a Sharpe + CI computed on the
+    in-market days only), separately from the full-period figure that is diluted by flat cash days. Returns an
+    EMPTY array when there is no reconstructable position or the mask does not align with ``returns`` — never a
+    wrong mask (an empty result honestly shows no in-market view rather than a mis-sliced one).
+    """
+    empty = np.array([], dtype=np.float64)
+    try:
+        r = np.asarray(returns, dtype=np.float64)
+        if not trades or "Close" not in data.columns or r.size < 1:
+            return empty
+        idx = data.index[warmup_bars:] if warmup_bars > 0 else data.index
+        if len(idx) < 2:
+            return empty
+        ts = pd.DatetimeIndex(idx).values
+        held = np.zeros(len(idx), dtype=bool)
+        for t in trades:
+            try:
+                e = np.datetime64(pd.Timestamp(t.entry_time))
+                x = np.datetime64(pd.Timestamp(t.exit_time))
+            except Exception:
+                continue
+            held[(ts >= e) & (ts < x)] = True        # a position was open on bars in [entry, exit)
+        mask = held[1:]                              # position held DURING bar j+1 aligns with returns[j]
+        if mask.shape[0] != r.shape[0]:
+            return empty                             # alignment guard — refuse a mis-sliced mask
+        return r[mask]
+    except Exception:
+        return empty
+
+
 class ResearchExecutor:
     """Wraps the backtesting engine for the research loop.
 
@@ -175,6 +209,9 @@ class ResearchExecutor:
             # genuinely-flat benchmark — so downstream honesty checks must key on this flag, not on 0.0.
             "benchmark_available": bool(len(returns) > 1),
             "returns": returns,
+            # valconf (in-market masking): daily returns on the bars a position was actually held → the
+            # 'edge when deployed' Sharpe + CI, shown beside the full-period figure. Empty when unreconstructable.
+            "returns_in_market": _in_market_returns(data, result.trades or [], warmup_bars, returns),
             "equity_curve": result.equity_curve,
             "strategy_hash": spec.get("strategy_hash", ""),
             "template_id": template_id,

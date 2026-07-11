@@ -713,6 +713,9 @@ async def get_run_candidates(
                 "outcome": _oos_res.outcome, "confidence_tier": _oos_res.confidence_tier,
                 "basis": _oos_res.basis, "ci_low": _oos_res.ci_low,
                 "ci_high": _oos_res.ci_high, "ci_level": _oos_res.ci_level,
+                "in_market_sharpe": _oos_res.in_market_sharpe,
+                "in_market_ci_low": _oos_res.in_market_ci_low,
+                "in_market_ci_high": _oos_res.in_market_ci_high,
             } if _oos_res is not None and _oos_res.confidence_tier else {}
             _vs = getattr(c, "validation_status", "")
             _wk = getattr(c, "weaknesses", []) or []

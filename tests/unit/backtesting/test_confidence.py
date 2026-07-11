@@ -155,3 +155,39 @@ def test_partial_nan_trades_do_not_earn_a_false_validation_via_inflated_df():
     )
     assert a.n_trades == 3                                    # the USABLE count is reported, not the inflated 10
     assert a.basis != "per_trade" and not a.validates         # too few real trades → no significance test, no validation
+
+
+# ── valconf in-market masking: the edge WHILE DEPLOYED (additive, display-only) ──
+@pytest.mark.finding("valconf-inmarket")
+def test_in_market_sharpe_and_ci_computed_when_a_series_is_supplied():
+    """When the in-market daily series is supplied, assess_confidence reports the edge WHILE DEPLOYED
+    (Sharpe + CI on those days only), on the same √ppy scale as observed_sharpe. It is additive — the
+    verdict fields (tier/validates/ci) are unchanged."""
+    rng = np.random.default_rng(3)
+    daily_full = list(rng.normal(0.0005, 0.008, 120))        # full period (diluted by cash days)
+    in_market = list(rng.normal(0.003, 0.008, 40))           # a stronger edge on the ~40 deployed days
+    a = assess_confidence(
+        train_trades=0, train_days=0, holdout_days=0, test_trades=0,
+        trade_returns=[], daily_returns=daily_full, exposure_time=0.33,
+        observed_sharpe=0.4, ppy=252.0, t_star=1.65, floor=5, seed=7,
+        in_market_returns=in_market,
+    )
+    assert a.in_market_sharpe is not None
+    assert a.in_market_ci_low is not None and a.in_market_ci_low <= a.in_market_ci_high
+    # the CI is the block-bootstrap of the in-market series at the same seed (reproducible per strategy)
+    lo, hi = block_bootstrap_sharpe_ci(in_market, 252.0, seed=7)
+    assert (a.in_market_ci_low, a.in_market_ci_high) == (round(lo, 4), round(hi, 4))
+    assert a.in_market_sharpe == round(float(annualized_sharpe(np.asarray(in_market), 252.0)), 4)
+
+
+@pytest.mark.finding("valconf-inmarket")
+def test_in_market_fields_none_without_a_series_or_when_too_thin():
+    base = dict(
+        train_trades=0, train_days=0, holdout_days=0, test_trades=0, trade_returns=[],
+        daily_returns=[0.01 + 0.001 * (i % 3) for i in range(30)], exposure_time=1.0,
+        observed_sharpe=0.5, ppy=252.0, t_star=1.65, floor=5, seed=0,
+    )
+    a = assess_confidence(**base)                                          # no series → all None
+    assert (a.in_market_sharpe, a.in_market_ci_low, a.in_market_ci_high) == (None, None, None)
+    b = assess_confidence(**base, in_market_returns=[0.01, 0.02, 0.015])   # < MIN_BARS → None
+    assert b.in_market_sharpe is None and b.in_market_ci_low is None and b.in_market_ci_high is None
