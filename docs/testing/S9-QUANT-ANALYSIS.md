@@ -92,3 +92,52 @@ quality (Sharpe / DSR / hold-out PASS), hypothesis/template diversity, report qu
 
 Claude + Moonshot are excluded until the Anthropic account is funded and the Moonshot key replaced. The spend
 is confirmed with the user before running (standing budget rule).
+
+## 5. Regime matrix — EXECUTED 2026-07-12 (paid, €0.69 total, all 10 runs clean)
+
+Approved & run: 2 regime windows × 5 reasoning models, full_ai, max_runs=20, target_candidates=3, each
+hard-capped at max_eur=0.35. **No run degraded, no errors, none hit the cap.** This is the first data that
+differentiates the *models* (S9 could not — see §3). Artifact: `scratchpad/regime_matrix_results.json`.
+
+**trend_covid (trend_following · AAPL/MSFT/NVDA · 2020-01→2021-06)**
+
+| Model | Cands | Templates used | Sharpes | €/run |
+|---|---|---|---|---|
+| o3 | 3 | macd_cross, sma_crossover | 1.19, 1.16, 1.24 | 0.208 |
+| gemini-2.5-pro | 2 | macd_cross, sma_crossover | 1.24, 1.17 | 0.083 |
+| deepseek-reasoner | 3 | macd_cross, sma_crossover | 1.24, 1.20, 1.13 | 0.016 |
+| glm-5 | 2 | sma_crossover | 1.29, 1.24 | 0.050 |
+| seed-2-0-pro | 3 | sma_crossover | 1.28, 1.24, 1.20 | 0.020 |
+
+**mr_2018 (mean_reversion · KO/PG/JNJ · 2018-01→2019-06)**
+
+| Model | Cands | Templates used | Sharpes | €/run |
+|---|---|---|---|---|
+| o3 | 3 | **bollinger_breakout**, rsi_reversion | 0.95, 0.43, 0.44 | 0.176 |
+| gemini-2.5-pro | 3 | rsi_reversion | 1.26, 1.06, 0.52 | 0.053 |
+| deepseek-reasoner | 1 | rsi_reversion | 1.00 | 0.017 |
+| glm-5 | 1 | rsi_reversion | 0.38 | 0.052 |
+| seed-2-0-pro | 3 | rsi_reversion | 1.14, 0.75, 0.38 | 0.015 |
+
+### What the models actually differ on
+1. **Template *exploration* is the clearest differentiator, not candidate quality.** Templates touched across
+   both windows (of 4 possible): **o3 = 4/4** (the only model to try `bollinger_breakout`), gemini = 3,
+   deepseek = 3, glm-5 = 2, byteplus = 2. Frontier/larger reasoners explore the proposal space wider; cheaper
+   models tunnel onto the single most obvious template (`sma_crossover` / `rsi_reversion`).
+2. **Winning configs converge.** The exact Sharpe **1.243** recurs across o3/gemini/deepseek/glm/byteplus on
+   trend_covid — in a strong regime every model lands on the *same* optimal `sma_crossover` spec. Model choice
+   changes the *breadth* of hypotheses far more than it changes the *winner*.
+3. **deepseek-reasoner is the value winner:** €0.032 for both windows (12× cheaper than o3's €0.384),
+   competitive breadth on trend (both templates, 3 candidates); weaker on MR (1 candidate).
+4. **o3 is 55% of the total spend** for one marginal edge (the bollinger exploration). For this task its cost
+   is hard to justify vs deepseek/byteplus.
+5. **Honesty layer held across every model:** all candidates came back `low`/`very_low` confidence and
+   `unvalidated` (regime-fit, not robustness-proven) — no model was allowed to oversell a regime-fit curio,
+   and gemini's reporter now produces real prose (`degraded=False`), confirming the F-2 fix under load.
+
+### Bottom line
+The engine is functionally correct and honest across families, regimes, rigor, OOS, and 5 providers. For a
+*production* selection model the relevant axis is **exploration breadth per €**, where **deepseek-reasoner and
+byteplus** dominate; o3 buys marginally wider search at ~12× the cost. The mechanism-only production choice
+(deepseek/byteplus, per the leakage research) is also the cost-efficient one here.
+
