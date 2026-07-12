@@ -1,32 +1,44 @@
 """AI API Manager endpoints."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.backend.ai.models import (
-    ChatMessage, ChatRequest, ChatResponse,
+    ChatMessage, ChatRequest, ProviderConfig,
     ToolDefinition, ToolFunction, ToolParameter,
     TTSRequest,
 )
 from src.backend.ai.registry import (
     available_provider_types,
+    create_provider,
     get_all_models,
-    get_all_providers,
     get_provider,
+    remove_provider,
 )
+from src.backend.ai.keycrypto import decrypt_key
 from src.backend.ai.leakage import provider_leakage
 from src.backend.api.dependencies import get_current_user_id
 from src.backend.db.engine import get_session
 from src.backend.ai.ai_service import (
     create_ai_provider,
     delete_ai_provider,
-    get_all_ai_models,
+    get_ai_provider,
     get_all_ai_providers,
     toggle_ai_provider,
 )
+
+
+def _register_live(name: str, provider_type: str, api_key: str, base_url: str | None) -> None:
+    """Register (or replace) a provider INSTANCE in the runtime registry so it is usable immediately —
+    without this, an added/toggled key only takes effect after the next server restart
+    (restore_providers_from_db), i.e. the research loop's get_provider() can't find it."""
+    try:
+        create_provider(ProviderConfig(name=name, provider_type=provider_type, api_key=api_key, base_url=base_url))
+    except ValueError:
+        pass  # unknown provider type — the DB row still exists; surfaced elsewhere
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -162,6 +174,8 @@ async def add_provider(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # Make the provider usable NOW (chat + the research loop resolve via the runtime registry, not the DB).
+    _register_live(row.name, row.provider_type, req.api_key, row.base_url)
     return ProviderResponse.from_db(row)
 
 
@@ -175,6 +189,11 @@ async def toggle_provider(
     row = await toggle_ai_provider(session, provider_id, active, user_id=user_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Provider not found")
+    # Keep the runtime registry in sync so the toggle takes effect immediately.
+    if row.is_active:
+        _register_live(row.name, row.provider_type, decrypt_key(row.api_key), row.base_url)
+    else:
+        remove_provider(row.name)
     return ProviderResponse.from_db(row)
 
 
@@ -184,9 +203,13 @@ async def remove_provider_endpoint(
     user_id: int = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
 ):
+    row = await get_ai_provider(session, provider_id)
+    name = row.name if row is not None else None
     ok = await delete_ai_provider(session, provider_id, user_id=user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Provider not found")
+    if name:
+        remove_provider(name)  # drop the runtime instance too, not just the DB row
     return {"message": "Deleted"}
 
 
