@@ -10,7 +10,6 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -353,6 +352,10 @@ class LLMStrategist:
             self.llm_calls += 1
             return built
         except Exception as exc:  # noqa: BLE001 — any LLM failure -> rule-based, never stall
+            # M57: record the HARD failure so a silently-degraded AI run (e.g. 401/400 on an unfunded key)
+            # surfaces as such instead of a clean "completed full_ai" with used_eur=0.
+            if self._ledger is not None:
+                self._ledger.record_failure(exc)
             logger.warning("Strategist LLM failed (%s) — rule-based", exc)
             return await self._fb.propose(asset, strategy_families, failure_context, registry_summary)
 

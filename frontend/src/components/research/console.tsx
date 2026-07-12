@@ -152,6 +152,16 @@ export function BudgetHUD({ state }: { state: ResearchState | null }) {
           {state.agent_mode.replace("_", "-")}
         </span>
       )}
+      {/* M57 (model-honesty): the LLM calls hard-failed (auth/credit/network) and the run silently fell
+          back to rule-based — say so loudly rather than presenting a clean AI run. */}
+      {state.degraded && (
+        <span
+          className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-red-950 text-red-300 border border-red-800"
+          title={`AI mode was requested but ${state.llm_failures ?? "one or more"} model call(s) failed (e.g. an invalid or unfunded API key). The strategy proposals and/or report fell back to the built-in rule-based engine — treat these results as rule-based, not AI-driven.`}
+        >
+          ⚠ AI unavailable · rule-based{state.llm_failures ? ` (${state.llm_failures} failed)` : ""}
+        </span>
+      )}
       {state.mode === "regime" && (
         <span
           className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800"

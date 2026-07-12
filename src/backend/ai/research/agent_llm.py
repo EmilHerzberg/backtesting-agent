@@ -123,8 +123,17 @@ class TokenLedger:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     n_calls: int = 0
+    n_failures: int = 0       # M57: hard LLM-call failures (exceptions) that forced a rule-based fallback
     cost_eur: float = 0.0
     cost_known: bool = True   # M44: False once any call used a model with unknown pricing
+
+    def record_failure(self, exc: BaseException | None = None) -> None:
+        """M57: an LLM call raised (auth/credit/network/rate-limit) and the agent fell back to the
+        rule-based/templated path. Count it AND propagate onto the Budget so the flag outlives this
+        (per-run, discarded) ledger and reaches ResearchState → the API state + report banner. Without
+        this a full_ai run whose every call 401s reports a clean 'completed full_ai' with used_eur=0."""
+        self.n_failures += 1
+        self.budget.llm_failures += 1
 
     def record(self, usage: TokenUsage | None, llm: LLMHandle) -> None:
         self.n_calls += 1

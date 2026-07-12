@@ -15,6 +15,10 @@ export interface ResearchState {
   // A-3 additions:
   status: string; // running | completed | failed | interrupted
   used_eur: number;
+  // M57 (model-honesty): a full_ai/ai_assisted run whose LLM calls hard-failed (auth/credit/network)
+  // silently falls back to rule-based. `degraded` says so; `llm_failures` counts the failed calls.
+  llm_failures?: number;
+  degraded?: boolean;
   agent_mode?: string; // W4 F-5: effective mode the run executed
   mode?: string; // P1: robustness | regime
   window_start?: string;

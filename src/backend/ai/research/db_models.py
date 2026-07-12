@@ -47,6 +47,10 @@ class ResearchRunDB(Base):
     max_seconds: Mapped[int] = mapped_column(Integer, default=0)
     used_runs: Mapped[int] = mapped_column(Integer, default=0)
     used_eur: Mapped[float] = mapped_column(Float, default=0.0)
+    # M57 (model-honesty): hard LLM-call failures that forced a rule-based/templated fallback. > 0 on an
+    # AI run ⇒ the run silently degraded; the persisted /state path reads this so a reloaded (post-restart)
+    # run stays honest, matching the live path + the report banner. (Migration entry in bootstrap._MIGRATIONS.)
+    llm_failures: Mapped[int] = mapped_column(Integer, default=0)
     target_candidates: Mapped[int] = mapped_column(Integer, default=3)
 
     # G3: how the run was configured (reproducibility + honesty — "how was this run run?")

@@ -202,6 +202,8 @@ class AdversarialCritic:
             verdict["source"] = "llm"   # M39: a genuine LLM critique (vs the heuristic fallback)
             return verdict
         except Exception as exc:  # noqa: BLE001 — any LLM failure must fall back, never accept
+            if self._ledger is not None:   # M57: surface the silent LLM→heuristic degradation
+                self._ledger.record_failure(exc)
             logger.warning("Critic LLM failed (%s) — using heuristic", exc)
             return self._heuristic_review(spec, metrics, gate_report)
 

@@ -15,7 +15,6 @@ from src.backend.ai.models import ChatMessage, ChatRequest
 from src.backend.ai.research.agent_llm import extract_json_object
 from src.backend.ai.research.reporter import (
     NumericClaimError,
-    ReportSection,
     ResearchReport,
     assert_no_numeric_claims,
 )
@@ -106,6 +105,17 @@ def generate_final_report(state: ResearchState) -> ResearchReport:
         "across the requested asset pool, systematically testing hypotheses and "
         "filtering through quality gates."
     )
+    # M57 (model-honesty): if an AI run had hard LLM-call failures, the proposals and/or this narrative
+    # silently fell back to the rule-based engine. Say so plainly (digit-free — the count lives in
+    # numeric_fields; a run whose every call failed still reports status=completed/full_ai otherwise).
+    if state.llm_degraded():
+        report.strategy_identity.numeric_fields["llm_call_failures"] = state.budget.llm_failures
+        report.strategy_identity.narrative = (
+            "NOTE — DEGRADED AI RUN: this run was configured for AI mode, but one or more model calls "
+            "failed (for example an authentication or credit error), so the strategy proposals and/or "
+            "this narrative fell back to the built-in rule-based engine. Read these results as "
+            "rule-based, not AI-driven. " + report.strategy_identity.narrative
+        )
 
     # ── Hypothesis ─────────────────────────────────────────────
     templates_tried = set()
@@ -372,6 +382,8 @@ async def llm_narrate_report(
             except NumericClaimError:
                 continue
     except Exception as exc:  # noqa: BLE001 — any failure -> all templated
+        if ledger is not None:   # M57: a templated-instead-of-LLM report is a silent degradation
+            ledger.record_failure(exc)
         logger.warning("Reporter LLM failed (%s) — templated narratives", exc)
     # belt-and-suspenders (W3S-1): narratives are all clean -> never raises; wrapped defensively.
     try:

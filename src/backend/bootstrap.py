@@ -54,6 +54,9 @@ _MIGRATIONS = [
     # persist_snapshot silently no-op'd inside its swallow-all try/except. Adding it here auto-migrates
     # at next boot (matching provider_type) — no manual ALTER TABLE needed.
     ("research_runs", "model_id", "VARCHAR(60) DEFAULT ''"),
+    # M57 (model-honesty): count of hard LLM-call failures → the persisted /state path can flag a
+    # reloaded AI run that silently degraded to rule-based (matches the live path + report banner).
+    ("research_runs", "llm_failures", "INTEGER DEFAULT 0"),
 ]
 
 

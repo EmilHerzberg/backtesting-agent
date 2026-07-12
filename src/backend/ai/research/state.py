@@ -59,6 +59,11 @@ class Budget:
     # unpriced calls contributed no €), so the HUD/report must show "cost unknown" rather than presenting
     # €0.0000 as if it were a genuinely-free run — and the € cap cannot be trusted to bind.
     cost_known: bool = True
+    # M57: count of HARD LLM-call failures (auth/credit/network/rate-limit exceptions) that forced an AI
+    # agent to fall back to the rule-based/templated path. Propagated from the (discarded) TokenLedger so
+    # it OUTLIVES the ledger and reaches ResearchState → API/report. > 0 on an AI run ⇒ the run silently
+    # degraded and MUST say so (model-honesty: never present a fell-back run as a clean full_ai run).
+    llm_failures: int = 0
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def remaining_runs(self) -> int:
@@ -270,6 +275,15 @@ class ResearchState:
     def goal_met(self) -> bool:
         """Whether enough candidates meet the user's criteria (C3 — not a raw candidate count)."""
         return len(self._criteria_satisfying()) >= self.goal.target_candidates
+
+    def llm_degraded(self) -> bool:
+        """M57: True when an AI run (ai_assisted/full_ai) hit ≥1 hard LLM-call failure, so at least one
+        agent silently fell back to the rule-based/templated path. The honest signal that "full_ai" did
+        not fully run (e.g. an unfunded/invalid key 401/400s). rule_based runs are never "degraded"."""
+        return (
+            self.agent_mode in ("ai_assisted", "full_ai")
+            and getattr(self.budget, "llm_failures", 0) > 0
+        )
 
     def validated_count(self, oos_enabled: bool) -> int:
         """Candidates that count toward the goal: they must satisfy the user's criteria (C3) and,

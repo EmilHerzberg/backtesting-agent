@@ -151,6 +151,112 @@ def test_run_leakage_badge_is_per_model_not_provider(monkeypatch):
     assert rt._run_leakage("deepseek", "deepseek-chat") == "unvalidated"     # the model wins
 
 
+# ── M57: silent LLM-degradation is surfaced (the claude/moonshot 401/400 finding) ──────────────────
+
+class _RaisingProvider:
+    """A provider whose LLM call hard-fails — models an unfunded (400) / invalid-key (401) account."""
+
+    def __init__(self, exc: Exception | None = None):
+        self._exc = exc or RuntimeError("Error code: 401 - Invalid Authentication")
+
+    async def chat_completion(self, req):
+        raise self._exc
+
+
+def _raising_handle(reasoning: bool = True) -> LLMHandle:
+    return LLMHandle(provider=_RaisingProvider(), model="m",
+                     input_price_per_m=1.0, output_price_per_m=2.0, supports_reasoning=reasoning)
+
+
+def _degraded_state(agent_mode: str = "full_ai", failures: int = 2):
+    from src.backend.ai.research.state import Budget, GoalBrief, ResearchState
+
+    st = ResearchState(goal=GoalBrief(goal_text="mean reversion on staples"), budget=Budget())
+    st.agent_mode = agent_mode
+    st.budget.llm_failures = failures
+    return st
+
+
+@pytest.mark.finding("M57")
+def test_token_ledger_record_failure_propagates_to_budget():
+    from src.backend.ai.research.agent_llm import TokenLedger
+    from src.backend.ai.research.state import Budget
+
+    b = Budget()
+    ledger = TokenLedger(budget=b)
+    ledger.record_failure(RuntimeError("401"))
+    ledger.record_failure(RuntimeError("401"))
+    # Counted on the ledger AND propagated to the Budget so it outlives the (discarded) ledger.
+    assert ledger.n_failures == 2
+    assert b.llm_failures == 2
+
+
+@pytest.mark.finding("M57")
+async def test_strategist_hard_failure_is_recorded_and_still_falls_back():
+    from src.backend.ai.research.agent_llm import TokenLedger
+    from src.backend.ai.research.state import Budget
+
+    ledger = TokenLedger(budget=Budget())
+    strat = LLMStrategist(_raising_handle(), ledger, RuleBasedStrategist())
+    hyp, spec = await strat.propose("KO", ["mean_reversion"], [], {})
+    assert spec["template_id"]                       # the run continues on the rule-based fallback
+    assert ledger.budget.llm_failures == 1           # …but the silent degradation is now visible
+
+
+@pytest.mark.finding("M57")
+async def test_critic_hard_failure_is_recorded_and_still_falls_back():
+    from src.backend.ai.research.agent_llm import TokenLedger
+    from src.backend.ai.research.state import Budget
+
+    ledger = TokenLedger(budget=Budget())
+    critic = AdversarialCritic(llm=_raising_handle(), ledger=ledger)
+    verdict = await critic.review({}, _metrics(), {})
+    assert verdict["source"] == "heuristic"          # fell back to the heuristic critic
+    assert ledger.budget.llm_failures == 1
+
+
+@pytest.mark.finding("M57")
+async def test_reporter_hard_failure_is_recorded():
+    from src.backend.ai.research.agent_llm import TokenLedger
+    from src.backend.ai.research.report_generator import generate_final_report, llm_narrate_report
+
+    st = _degraded_state(failures=0)                 # start clean; the reporter call is what fails
+    ledger = TokenLedger(budget=st.budget)
+    report = generate_final_report(st)
+    await llm_narrate_report(report, st, _raising_handle(), ledger)
+    assert ledger.budget.llm_failures == 1           # templated-instead-of-LLM narrative is a degradation
+
+
+@pytest.mark.finding("M57")
+def test_research_state_llm_degraded_semantics():
+    assert _degraded_state("full_ai", 2).llm_degraded() is True
+    assert _degraded_state("ai_assisted", 1).llm_degraded() is True
+    assert _degraded_state("full_ai", 0).llm_degraded() is False     # AI ran cleanly
+    assert _degraded_state("rule_based", 5).llm_degraded() is False   # rule_based is never "degraded"
+
+
+@pytest.mark.finding("M57")
+def test_report_shows_degraded_banner_and_stays_digit_free():
+    from src.backend.ai.research.report_generator import generate_final_report
+
+    report = generate_final_report(_degraded_state("full_ai", 3))
+    ident = report.strategy_identity
+    assert "DEGRADED AI RUN" in ident.narrative               # the run admits it fell back
+    assert "rule-based" in ident.narrative.lower()
+    assert ident.numeric_fields["llm_call_failures"] == 3     # the count lives in numeric_fields…
+    # …never in the prose (generate_final_report calls validate_narratives, which forbids digits).
+    assert not any(ch.isdigit() for ch in ident.narrative)
+
+
+@pytest.mark.finding("M57")
+def test_report_has_no_degraded_banner_for_a_clean_run():
+    from src.backend.ai.research.report_generator import generate_final_report
+
+    report = generate_final_report(_degraded_state("full_ai", 0))
+    assert "DEGRADED" not in report.strategy_identity.narrative
+    assert "llm_call_failures" not in report.strategy_identity.numeric_fields
+
+
 @pytest.mark.finding("M56")
 def test_unknown_model_fallback_is_not_optimistically_mechanism_only(monkeypatch):
     # M56: for a run whose model is UNKNOWN (empty model_id — legacy rows / '' migration default), the

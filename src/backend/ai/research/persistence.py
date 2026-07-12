@@ -124,6 +124,7 @@ async def persist_snapshot(rec: Any) -> None:
                 run.current_lineage = st.current_lineage_id
                 run.used_runs = st.budget.used_runs
                 run.used_eur = float(st.budget.used_eur)
+                run.llm_failures = int(getattr(st.budget, "llm_failures", 0) or 0)   # M57
                 run.train_end = getattr(st, "train_end", "") or ""   # P2: select-on-train split boundary
                 run.provider_type = getattr(st, "provider_type", "") or ""   # P2: leakage-marker provenance
                 run.model_id = getattr(st, "model_id", "") or ""             # H31: per-model leakage badge
@@ -323,6 +324,7 @@ async def load_run_for_state(goal_id: str, user_id: int) -> dict[str, Any] | Non
             "used_runs": run.used_runs,
             "max_runs": run.max_runs,
             "used_eur": run.used_eur,
+            "llm_failures": int(getattr(run, "llm_failures", 0) or 0),   # M57
             "max_seconds": run.max_seconds,
             "current_lineage": run.current_lineage,
             "status": run.status,

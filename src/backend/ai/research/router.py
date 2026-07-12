@@ -142,6 +142,11 @@ class ResearchStateResponse(BaseModel):
     # M44: False when the run used any model with unknown pricing → used_eur is a lower bound, not a true
     # €0. The HUD should render "cost unknown" instead of "€0.0000" (which would read as genuinely free).
     cost_known: bool = True
+    # M57 (model-honesty): a full_ai/ai_assisted run whose LLM calls hard-failed (auth/credit/network)
+    # silently falls back to rule-based; `degraded` says so and `llm_failures` counts the failures. The
+    # HUD should show "AI unavailable — results are rule-based" rather than a clean full_ai badge.
+    llm_failures: int = 0
+    degraded: bool = False
     agent_mode: str = "rule_based"   # W4 (F-5): the effective mode the run executed
     mode: str = "robustness"         # P1: robustness | regime
     window_start: str = ""           # P1: effective backtest window
@@ -615,6 +620,8 @@ async def get_run_state(
             status=rec.status,
             used_eur=float(state.budget.used_eur),
             cost_known=bool(getattr(state.budget, "cost_known", True)),   # M44
+            llm_failures=int(getattr(state.budget, "llm_failures", 0)),   # M57
+            degraded=state.llm_degraded(),                               # M57
             agent_mode=getattr(state, "agent_mode", "rule_based"),   # W4 F-5
             mode=getattr(state, "mode", "robustness"),               # P1
             window_start=getattr(state, "window_start", ""),
@@ -652,6 +659,9 @@ async def get_run_state(
         error_message=row["error_message"],
         status=row["status"],
         used_eur=row["used_eur"],
+        llm_failures=int(row.get("llm_failures", 0) or 0),   # M57
+        degraded=(row.get("agent_mode", "rule_based") in ("ai_assisted", "full_ai")
+                  and int(row.get("llm_failures", 0) or 0) > 0),   # M57
         max_seconds=row["max_seconds"],
         started_at=row["started_at"],   # M53: already a UTC-marked ISO string from persistence._utc_iso
         current_lineage=row["current_lineage"],
