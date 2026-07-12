@@ -120,10 +120,26 @@ run, so it lives in S9 (full_ai, LLM-latency-bound).
 **S8 (error boundary) — dropped from E2E.** The boundary can't be triggered deterministically (the app is
 defensive); it's a safety net whose existence is the point. Verified by build/typecheck, not a flaky E2E.
 
-**S9 (paid multi-model) — WRITTEN & GATED.** Skips cleanly without `E2E_LLM=1` + keys. Runs the same full_ai
-scenario across openai/anthropic(claude)/gemini/deepseek, records each outcome (status, used_eur, candidates,
-report length, leakage, errors) to `results/e2e-model-comparison.json`, and asserts each provider's wiring works
-(a broken provider fails its own test but all are recorded). Awaiting keys.
+**S9 (paid multi-model) — RUN COMPLETED 2026-07-12 (7 providers, €0.139 total).** Runs the same full_ai
+scenario across openai/anthropic(claude)/gemini/deepseek/zhipu/moonshot/byteplus, records each outcome to
+`results/e2e-model-comparison.json`, and asserts each provider's wiring works (a broken provider fails its own
+test but all are recorded). Still gated behind `E2E_LLM=1` + per-provider key env vars.
+
+Reasoning models per provider: openai `o3`, claude `claude-sonnet-4-6`, gemini `gemini-2.5-pro`,
+deepseek `deepseek-reasoner`, zhipu `glm-5`, moonshot `kimi-k2.5-thinking`, byteplus `seed-2-0-pro-260328`.
+
+| Provider | Model | Status | used_eur | Cands | Narrative | Leakage | Notes |
+|---|---|---|---|---|---|---|---|
+| openai | o3 | completed | 0.0833 | 0 | 728 | risk | real LLM run |
+| gemini | gemini-2.5-pro | completed | 0.0203 | 0 | 1261 | risk | real LLM run (fix verified) |
+| zhipu | glm-5 | completed | 0.0261 | 0 | 774 | unvalidated | real LLM run |
+| byteplus | seed-2-0-pro-260328 | completed | 0.0066 | 0 | 784 | mechanism_only | real LLM run |
+| deepseek | deepseek-reasoner | completed | 0.0026 | 0 | 752 | mechanism_only | real LLM run |
+| claude | claude-sonnet-4-6 | completed* | 0.0000 | 0 | 1261 | risk | **LLM 400 (unfunded acct) → rule-based fallback** |
+| moonshot | kimi-k2.5-thinking | completed* | 0.0000 | 0 | 1261 | unvalidated | **LLM 401 (bad key) → rule-based fallback** |
+
+\* "completed" but the LLM never actually ran — see finding #5. All 7 found **0 candidates** (the honest gates
+reject the sampled mean-reversion strategies — consistent across every model, reasoning or not).
 
 ### Bugs the E2E surfaced (fixed in the same change)
 1. **SQLite `database is locked` (500)** — the engine used the default rollback journal, so a request that wrote
@@ -135,6 +151,21 @@ report length, leakage, errors) to `results/e2e-model-comparison.json`, and asse
 3. **Demo finding (not a bug):** rule_based reliably finds **0 candidates** on trend-on-trending-stocks (the honest
    gates reject them — mostly `minimum_activity` + `benchmark_relative`). A demo that surfaces a candidate should
    use **mean-reversion on stable/mean-reverting assets** (e.g. staples KO/PG/JNJ/XOM) — the calibrated E2E config.
+4. **Provider dead until restart** — `add_provider`/`toggle_provider` wrote the DB row but never populated the
+   runtime `_INSTANCES` registry, so a newly-configured provider 404'd on `/chat` until the next server restart.
+   Fixed: register/deregister the live instance on add/toggle/delete (`src/backend/api/routers/ai.py`).
+5. **Gemini silent model-substitution** — a full_ai run requesting a model absent from the provider catalog was
+   silently swapped to `models[0]`; for gemini that was the Vertex-only `gemini-3-pro`, which 404s on an
+   AI-Studio key → silent rule-based fallback, `used_eur=0`. Fixed: `gemini-2.5-pro` is now the default catalog
+   entry (`src/backend/ai/providers/gemini.py`).
+
+### Open finding — silent LLM degradation (model-honesty gap, NOT yet fixed)
+When a full_ai run's Strategist/Reporter LLM calls fail (claude 400 unfunded, moonshot 401 bad key), the run
+**silently falls back to the rule-based strategist + templated narratives but still reports `status=completed`
+and `agent_mode=full_ai`**. The only tell is `used_eur=0`. A user with a broken/unfunded key would believe the
+AI ran when it never did. This violates the project's model-honesty principle. Recommended fix: track LLM-call
+failures per run and surface a `degraded`/`llm_failures` flag in the run state + a report banner ("AI unavailable
+— N calls failed (auth/credit); results are rule-based"). Scoped as a follow-up.
 
 ## 7. How to run
 
