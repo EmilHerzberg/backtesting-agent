@@ -228,6 +228,44 @@ async def test_reporter_hard_failure_is_recorded():
 
 
 @pytest.mark.finding("M57")
+async def test_reporter_billed_but_all_sections_rejected_is_degraded():
+    # The gemini-2.5-pro S9 case: the reporter LLM RESPONDS (and bills) but every section digit-leaks
+    # (or is unparseable) → all templated. used_eur>0 yet the report is 100% rule-based. Must flag.
+    import json as _json
+
+    from src.backend.ai.research.report_generator import (
+        _REPORT_SECTIONS, generate_final_report, llm_narrate_report, serialize_report)
+    from src.backend.ai.research.agent_llm import TokenLedger
+
+    digit_body = {k: "This strategy delivered a Sharpe of 1.2 and returned 34% over the window."
+                  for k in _REPORT_SECTIONS}
+    h = _handle(_json.dumps(digit_body), reasoning=True)     # every section contains digits → all rejected
+    st = _degraded_state(failures=0)
+    ledger = TokenLedger(budget=st.budget)
+    report = generate_final_report(st)
+    await llm_narrate_report(report, st, h, ledger)
+    narr = " ".join(s["narrative"] for s in serialize_report(report)["sections"]).strip()
+    assert not any(ch.isdigit() for ch in narr)      # the digit-leaking prose was correctly rejected…
+    assert ledger.budget.llm_failures == 1           # …and the paid-but-fully-templated run is flagged
+    assert st.llm_degraded() is True
+
+
+@pytest.mark.finding("M57")
+async def test_reporter_reasoning_model_gets_headroom_not_900():
+    # H25 extended to the Reporter: a 900-token cap truncates a reasoner before its JSON → all templated.
+    from src.backend.ai.research.report_generator import generate_final_report, llm_narrate_report
+
+    st = _degraded_state(failures=0)
+    reasoner = _handle('{"strategy_identity": "a brief search found nothing"}', reasoning=True)
+    await llm_narrate_report(generate_final_report(st), st, reasoner, None)
+    assert reasoner.provider.last_req.max_tokens == 4000
+
+    non_reasoner = _handle('{"strategy_identity": "a brief search found nothing"}', reasoning=False)
+    await llm_narrate_report(generate_final_report(st), st, non_reasoner, None)
+    assert non_reasoner.provider.last_req.max_tokens == 900
+
+
+@pytest.mark.finding("M57")
 def test_research_state_llm_degraded_semantics():
     assert _degraded_state("full_ai", 2).llm_degraded() is True
     assert _degraded_state("ai_assisted", 1).llm_degraded() is True

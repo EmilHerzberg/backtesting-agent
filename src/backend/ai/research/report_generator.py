@@ -364,13 +364,18 @@ async def llm_narrate_report(
                 })),
             ],
             temperature=0.3,
-            max_tokens=900,
+            # H25 (extended to the Reporter): reasoning models spend tokens on hidden chain-of-thought
+            # BEFORE the JSON, so a 900-token cap truncated them → unparseable → every section fell back
+            # to template while billing (the Strategist/Critic already got this headroom; the Reporter
+            # was missed — the likely root cause of the gemini-2.5-pro paid-but-fully-templated report).
+            max_tokens=4000 if getattr(llm, "supports_reasoning", False) else 900,
             json_mode=llm.supports_json_mode,
         )
         resp = await llm.provider.chat_completion(req)
         if ledger is not None:
             ledger.record(resp.usage, llm)
         data = extract_json_object(resp.content) or {}
+        accepted = 0                                    # M57: sections the LLM actually rewrote
         for key in _REPORT_SECTIONS:
             sec = getattr(report, key, None)
             text = data.get(key)
@@ -379,8 +384,17 @@ async def llm_narrate_report(
             try:
                 assert_no_numeric_claims(text, key)  # digit leak -> keep template (C-3)
                 sec.narrative = text.strip()
+                accepted += 1
             except NumericClaimError:
                 continue
+        # M57 (model-honesty): we PAID for narration but NOT ONE section survived (unparseable JSON, or
+        # every section digit-leaked → all templated). The user gets a 100%-rule-based report with no
+        # tell but used_eur>0. Count it as a degradation so the banner + HUD chip say so. (Observed with
+        # gemini-2.5-pro in the S9 run: real spend, fully-templated 1261-char report.)
+        if accepted == 0 and ledger is not None:
+            ledger.record_failure(None)
+            logger.warning("Reporter LLM billed but every section was rejected "
+                           "(unparseable/digit-leak) — fully templated narrative")
     except Exception as exc:  # noqa: BLE001 — any failure -> all templated
         if ledger is not None:   # M57: a templated-instead-of-LLM report is a silent degradation
             ledger.record_failure(exc)
