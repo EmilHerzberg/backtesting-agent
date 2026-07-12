@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { APIRequestContext, expect, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { BACKEND, apiLogin, apiRegisterVerify, uniqueEmail } from "../helpers/auth";
 import { getReport, pollUntilTerminal, startRunApi } from "../helpers/run";
 
@@ -15,28 +15,26 @@ const LLM_ON = process.env.E2E_LLM === "1";
 
 // REASONING models, tiered by cost (per the run decision): o3 / claude-sonnet (mid-tier reasoning, NOT the
 // $15/$75 Opus) / gemini-3-pro / deepseek-reasoner (frontier R1, cheap). Override any with E2E_<PROVIDER>_MODEL.
+// Defaults are pre-flight-validated REASONING models. NOTE gemini uses gemini-2.5-pro (the catalog's
+// gemini-3-pro is Vertex-only and 404s on an AI-Studio key). Anthropic/Moonshot are included but need a
+// funded/valid key. Override any with E2E_<PROVIDER>_MODEL; keys via the keyEnv below.
 const PROVIDERS = [
   { name: "openai", type: "openai", keyEnv: "E2E_OPENAI_KEY", modelEnv: "E2E_OPENAI_MODEL", defaultModel: "o3" },
   { name: "claude", type: "anthropic", keyEnv: "E2E_ANTHROPIC_KEY", modelEnv: "E2E_ANTHROPIC_MODEL", defaultModel: "claude-sonnet-4-6" },
-  { name: "gemini", type: "gemini", keyEnv: "E2E_GEMINI_KEY", modelEnv: "E2E_GEMINI_MODEL", defaultModel: "gemini-3-pro" },
+  { name: "gemini", type: "gemini", keyEnv: "E2E_GEMINI_KEY", modelEnv: "E2E_GEMINI_MODEL", defaultModel: "gemini-2.5-pro" },
   { name: "deepseek", type: "deepseek", keyEnv: "E2E_DEEPSEEK_KEY", modelEnv: "E2E_DEEPSEEK_MODEL", defaultModel: "deepseek-reasoner" },
+  { name: "zhipu", type: "zhipu", keyEnv: "E2E_ZAI_KEY", modelEnv: "E2E_ZAI_MODEL", defaultModel: "glm-5" },
+  { name: "moonshot", type: "moonshot", keyEnv: "E2E_MOONSHOT_KEY", modelEnv: "E2E_MOONSHOT_MODEL", defaultModel: "kimi-k2.5-thinking" },
+  { name: "byteplus", type: "byteplus", keyEnv: "E2E_BYTEPLUS_KEY", modelEnv: "E2E_BYTEPLUS_MODEL", defaultModel: "seed-2-0-pro-260328" },
 ];
 type ProviderCfg = (typeof PROVIDERS)[number];
 
 const comparison: Record<string, unknown>[] = [];
 
-// Resolve the model: an explicit env override wins; else the tiered reasoning default (if the catalog has it);
-// else fall back to any reasoning model the provider exposes; else the first model.
-async function pickModel(request: APIRequestContext, token: string, p: ProviderCfg): Promise<string> {
-  const override = process.env[p.modelEnv];
-  if (override) return override;
-  const res = await request.get(`${BACKEND}/api/ai/models`, { headers: { Authorization: `Bearer ${token}` } });
-  const models: any[] = res.ok() ? await res.json() : [];
-  const forType = models.filter((m) => String(m.provider || "").toLowerCase() === p.type);
-  expect(forType.length, `provider ${p.type} exposes at least one model`).toBeGreaterThan(0);
-  if (forType.some((m) => m.model_id === p.defaultModel)) return p.defaultModel;
-  const reasoning = forType.find((m) => m.supports_reasoning);
-  return String((reasoning || forType[0]).model_id);
+// An explicit env override wins; else the validated per-provider default (do NOT consult the catalog — its
+// gemini entry is Vertex-only and would wrongly reject the working gemini-2.5-pro).
+function pickModel(p: ProviderCfg): string {
+  return process.env[p.modelEnv] || p.defaultModel;
 }
 
 test.describe("S9 — multi-model full_ai comparison (paid, gated)", () => {
@@ -59,16 +57,18 @@ test.describe("S9 — multi-model full_ai comparison (paid, gated)", () => {
       const token = await apiLogin(request, email);
       const authHdr = { Authorization: `Bearer ${token}` };
 
+      // The runtime registry is keyed by the provider NAME; use a unique name (global registry, serial tests).
+      const provName = `${p.name}-e2e-${Date.now()}`;
       const cr = await request.post(`${BACKEND}/api/ai/providers`, {
         headers: authHdr,
-        data: { name: `${p.name}-e2e`, provider_type: p.type, api_key: key },
+        data: { name: provName, provider_type: p.type, api_key: key },
       });
       expect(cr.ok(), `configure ${p.name} -> ${cr.status()}: ${await cr.text()}`).toBeTruthy();
 
-      const model = await pickModel(request, token, p);
+      const model = pickModel(p);
 
       // A small full_ai run — the LLM Strategist proposes, the LLM Critic reviews, the LLM Reporter writes.
-      // Hard-capped at max_eur so it cannot overrun.
+      // Hard-capped at max_eur so it cannot overrun. `provider` is the configured NAME (the registry key).
       const record: Record<string, unknown> = { provider: p.name, model };
       try {
         const goalId = await startRunApi(request, token, {
@@ -76,7 +76,7 @@ test.describe("S9 — multi-model full_ai comparison (paid, gated)", () => {
           asset_pool: ["KO", "PG", "JNJ", "XOM"],
           strategy_families: ["mean_reversion"],
           agent_mode: "full_ai",
-          provider: p.type,
+          provider: provName,
           model,
           max_runs: 5,
           max_seconds: 300,
@@ -130,14 +130,15 @@ test.describe("S9 — multi-model full_ai comparison (paid, gated)", () => {
     await apiRegisterVerify(request, email);
     const token = await apiLogin(request, email);
     const authHdr = { Authorization: `Bearer ${token}` };
+    const provName = `${p!.name}-pause-${Date.now()}`;
     await request.post(`${BACKEND}/api/ai/providers`, {
       headers: authHdr,
-      data: { name: `${p!.name}-pause`, provider_type: p!.type, api_key: process.env[p!.keyEnv] },
+      data: { name: provName, provider_type: p!.type, api_key: process.env[p!.keyEnv] },
     });
-    const model = await pickModel(request, token, p!);
+    const model = pickModel(p!);
     const goalId = await startRunApi(request, token, {
       goal_text: "mean reversion on staples", asset_pool: ["KO", "PG", "JNJ", "XOM"],
-      strategy_families: ["mean_reversion", "trend_following"], agent_mode: "full_ai", provider: p!.type,
+      strategy_families: ["mean_reversion", "trend_following"], agent_mode: "full_ai", provider: provName,
       model, max_runs: 10, max_seconds: 360, target_candidates: 9, rigor: "exploratory",
       enable_oos: false, mode: "robustness", seed: 3, max_eur: 1.0,
     });
