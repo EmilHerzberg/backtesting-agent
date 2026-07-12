@@ -11,9 +11,18 @@ from src.backend.ai.models import ModelInfo
 from src.backend.ai.providers.base import OpenAICompatibleProvider
 
 GEMINI_MODELS: list[ModelInfo] = [
-    ModelInfo(model_id="gemini-3-pro", display_name="Gemini 3 Pro", provider="gemini",
-              description="Google flagship, thinking. Measured leakage risk (Gemini family = calibrated recall in "
-                          "our research) — use only as a research oracle, not for selection.",
+    # DEFAULT first: gemini-2.5-pro works on an AI Studio key (GOOGLE_API_KEY). gemini-3-pro below is
+    # Vertex-only and 404s on AI Studio — keep the fallback (resolve_agent_llm substitutes models[0]) on a
+    # model that actually resolves for the common key type.
+    ModelInfo(model_id="gemini-2.5-pro", display_name="Gemini 2.5 Pro", provider="gemini",
+              description="Balanced flagship, thinking. Available on AI Studio (GOOGLE_API_KEY). Measured "
+                          "leakage risk (Gemini family = calibrated recall in our research).",
+              context_window=1000000, input_price_per_m=Decimal("1.25"), output_price_per_m=Decimal("10.0"),
+              supports_streaming=True, supports_tools=True, supports_reasoning=True, supports_json_mode=True,
+              leakage="risk"),
+    ModelInfo(model_id="gemini-3-pro", display_name="Gemini 3 Pro (Vertex)", provider="gemini",
+              description="Google flagship, thinking. VERTEX-ONLY — 404s on an AI Studio key; needs Vertex AI "
+                          "credentials. Measured leakage risk — use only as a research oracle, not for selection.",
               context_window=1000000, input_price_per_m=Decimal("2.0"), output_price_per_m=Decimal("12.0"),
               supports_streaming=True, supports_tools=True, supports_reasoning=True, supports_json_mode=True,
               leakage="risk"),

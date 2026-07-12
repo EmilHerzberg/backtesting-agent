@@ -29,22 +29,38 @@ const PROVIDERS = [
 ];
 type ProviderCfg = (typeof PROVIDERS)[number];
 
-const comparison: Record<string, unknown>[] = [];
-
 // An explicit env override wins; else the validated per-provider default (do NOT consult the catalog — its
 // gemini entry is Vertex-only and would wrongly reject the working gemini-2.5-pro).
 function pickModel(p: ProviderCfg): string {
   return process.env[p.modelEnv] || p.defaultModel;
 }
 
+// Write each result to the artifact AS IT COMPLETES (read-modify-write, dedup by provider). A module-level
+// array + afterAll loses data when Playwright restarts the worker after a failing test; and this lets an
+// incremental re-run (e.g. one provider) update just that row while keeping the rest.
+const ARTIFACT = path.resolve(__dirname, "..", "..", "..", "results", "e2e-model-comparison.json");
+function appendResult(record: Record<string, unknown>): void {
+  fs.mkdirSync(path.dirname(ARTIFACT), { recursive: true });
+  let doc: { scenario: string; models: Record<string, unknown>[] } = { scenario: "S9", models: [] };
+  try {
+    doc = JSON.parse(fs.readFileSync(ARTIFACT, "utf8"));
+  } catch {
+    /* first write */
+  }
+  doc.models = (doc.models || []).filter((m) => m.provider !== record.provider);
+  doc.models.push(record);
+  fs.writeFileSync(ARTIFACT, JSON.stringify(doc, null, 2));
+}
+
 test.describe("S9 — multi-model full_ai comparison (paid, gated)", () => {
   test.skip(!LLM_ON, "set E2E_LLM=1 and provider key env vars to run the paid multi-model comparison");
 
-  test.afterAll(async () => {
-    const out = path.resolve(__dirname, "..", "..", "..", "results", "e2e-model-comparison.json");
-    fs.mkdirSync(path.dirname(out), { recursive: true });
-    fs.writeFileSync(out, JSON.stringify({ scenario: "S9", models: comparison }, null, 2));
-    console.log(`\nS9 comparison → ${out}\n` + JSON.stringify(comparison, null, 2));
+  test.afterAll(() => {
+    try {
+      console.log(`\nS9 comparison → ${ARTIFACT}\n` + fs.readFileSync(ARTIFACT, "utf8"));
+    } catch {
+      /* nothing written (all skipped) */
+    }
   });
 
   for (const p of PROVIDERS) {
@@ -106,7 +122,7 @@ test.describe("S9 — multi-model full_ai comparison (paid, gated)", () => {
       } catch (e) {
         record.error = e instanceof Error ? e.message : String(e);
       }
-      comparison.push(record);
+      appendResult(record);
       console.log(`S9 ${p.name}:`, JSON.stringify(record));
 
       // The wiring must actually work for this provider (these fail loudly per-provider; the artifact still records all).
