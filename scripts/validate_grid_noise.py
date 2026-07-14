@@ -60,7 +60,8 @@ def positions(template, params, sym, warmup=0):
     p = np.zeros(len(data), dtype=np.int8)
     for t in (res.trades or []):
         side = 1 if str(getattr(t, "side", "long")).lower() == "long" else -1
-        e = np.datetime64(pd.Timestamp(t.entry_time)); x = np.datetime64(pd.Timestamp(t.exit_time))
+        e = np.datetime64(pd.Timestamp(t.entry_time))
+        x = np.datetime64(pd.Timestamp(t.exit_time))
         p[(ts >= e) & (ts < x)] = side
     return p[warmup:] if warmup else p
 
