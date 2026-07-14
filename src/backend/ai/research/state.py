@@ -252,6 +252,7 @@ class ResearchState:
     window_end: str = ""
     train_end: str = ""                               # P2: regime select-on-train split ("" = no split / robustness)
     oos_results: list[OOSResult] = field(default_factory=list)
+    coverage_summary: dict[str, Any] = field(default_factory=dict)  # v1 coverage: spread/novelty telemetry (report)
     lineage_nodes: list = field(default_factory=list)  # ATSX-26: serialized lineage tree
     holdout_eval_counts: dict[str, int] = field(default_factory=dict)  # H18: reuses of each (asset,slice) hold-out
 

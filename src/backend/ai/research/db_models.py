@@ -179,3 +179,36 @@ class ResearchLineageDB(Base):
     declared_by: Mapped[str] = mapped_column(String(40), default="")
     node_created_at: Mapped[str] = mapped_column(String(40), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
+
+
+class ResearchCoverageDB(Base):
+    """Cross-run space-filling coverage map (v1). One upserted row per VISITED cell of a template's
+    hyperparameter grid, so new runs sample UNVISITED cells instead of re-testing near-duplicates.
+    Brand-new table → create_all builds it; NO bootstrap._MIGRATIONS entry needed (that is only for
+    columns added to EXISTING tables). Reconstructable from research_candidates+research_failures
+    (coverage.backfill_coverage) — a denormalized accelerator, never the sole source of truth.
+
+    Keyed per (scope_key=user_id, template_id, security_id, window_key, cell_id): the tested space is
+    inherently per-asset (the strategy hash folds in security_id) and per-template (disjoint param dims);
+    window_key namespaces robustness ("") vs each regime window. See docs/design/COVERAGE-MEMORY-V1.md.
+    """
+
+    __tablename__ = "research_coverage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope_key: Mapped[str] = mapped_column(String(40), index=True, default="0")     # user_id (multiplicity/tenant isolation)
+    template_id: Mapped[str] = mapped_column(String(60), index=True, default="")
+    security_id: Mapped[str] = mapped_column(String(40), index=True, default="")    # asset
+    window_key: Mapped[str] = mapped_column(String(48), default="")                 # "" = robustness (fixed window); "<ws>:<we>" = regime
+    grid_version: Mapped[str] = mapped_column(String(8), default="v1")              # binning scheme version (re-tuning never collides)
+    cell_id: Mapped[str] = mapped_column(String(64), default="")
+    exemplar_hash: Mapped[str] = mapped_column(String(64), default="")              # one strategy_hash that landed here (join to candidates/failures)
+    visit_count: Mapped[int] = mapped_column(Integer, default=0)
+    survived_count: Mapped[int] = mapped_column(Integer, default=0)
+    died_count: Mapped[int] = mapped_column(Integer, default=0)
+    # TELEMETRY ONLY (exhaustion report). The sampler MUST NEVER read this — steering toward high-Sharpe
+    # cells is exploitation → overfitting, the exact thing coverage is designed NOT to do (v1 quality gate).
+    best_sharpe: Mapped[float] = mapped_column(Float, default=0.0)
+    last_goal_id: Mapped[str] = mapped_column(String(40), default="")
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)

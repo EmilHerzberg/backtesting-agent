@@ -106,15 +106,33 @@ class RuleBasedStrategist:
     No LLM required. Works fully offline.
     """
 
-    def __init__(self, seed: int = 42, window_start: str = WINDOW_START, window_end: str = WINDOW_END):
+    def __init__(self, seed: int = 42, window_start: str = WINDOW_START, window_end: str = WINDOW_END,
+                 coverage=None):
         self._rng = np.random.default_rng(seed)
-        self._tried_hashes: set[str] = set()
+        # v1 coverage memory: pre-seed the within-run tried-set from the persisted cross-run set, so both the
+        # rule-based dedup here and LLMStrategist._build (shared _fb._tried_hashes) skip prior runs' points.
+        self._cov = coverage
+        self._tried_hashes: set[str] = set(coverage.tried_hashes) if coverage is not None else set()
         self._template_failures: dict[str, int] = {}  # template_id → failure count
         self._call_count = 0
         # P1: the effective backtest window — robustness = the fixed default, regime = the run's window.
         # The strategist only STAMPS it (the run config sets it); the LLM never chooses it (C-6).
         self.window_start = window_start
         self.window_end = window_end
+
+    def _choose_spacefilling(self, available: list[str], asset: str):
+        """Coverage path: spread across TEMPLATES (take the least-covered allowed template, tie-broken by the
+        least-failed order) AND across CELLS (its farthest unvisited cell, maximin). Returns
+        (template_id, params, cell_id), or None when every allowed template's feasible space is saturated
+        (caller falls back to uniform — never stalls)."""
+        from src.backend.ai.research import coverage as _coverage
+        ranked = sorted(available, key=lambda t: (self._cov.pct_covered(t, asset), available.index(t)))
+        for template_id in ranked:
+            cid = self._cov.pick_cell(template_id, asset, self._rng)
+            if cid is not None:
+                params = _repair_params(template_id, _coverage.cell_center(template_id, cid))
+                return template_id, params, cid
+        return None
 
     async def propose(
         self,
@@ -140,22 +158,41 @@ class RuleBasedStrategist:
         # Sort: least-failed templates first, then unexplored.
         available.sort(key=lambda t: self._template_failures.get(t, 0))
 
-        # Try to find a spec we haven't tried yet (max 10 attempts).
-        for attempt in range(10):
-            template_id = available[attempt % len(available)]
-            param_space = TEMPLATES[template_id]
-            params = _repair_params(template_id, _sample_params(param_space, self._rng))
+        # v1 space-filling: when coverage memory is on, pick the farthest UNVISITED cell; fall through to the
+        # i.i.d.-uniform search when coverage is off OR every allowed template's space is saturated (AT-10:
+        # signal, never auto-stop).
+        cell_id: str | None = None
+        coverage_saturated = False
+        if self._cov is not None:
+            choice = self._choose_spacefilling(available, asset)
+            if choice is not None:
+                template_id, params, cell_id = choice
+                strategy_hash = _compute_strategy_hash(template_id, params, asset)
+            else:
+                coverage_saturated = True
 
-            strategy_hash = _compute_strategy_hash(template_id, params, asset)
-            if strategy_hash not in self._tried_hashes:
-                break
-        else:
-            # All attempts were duplicates — force random.
-            template_id = self._rng.choice(available)
-            params = _repair_params(template_id, _sample_params(TEMPLATES[template_id], self._rng))
-            strategy_hash = _compute_strategy_hash(template_id, params, asset)
+        if self._cov is None or coverage_saturated:
+            # Try to find a spec we haven't tried yet (max 10 attempts).
+            for attempt in range(10):
+                template_id = available[attempt % len(available)]
+                param_space = TEMPLATES[template_id]
+                params = _repair_params(template_id, _sample_params(param_space, self._rng))
+
+                strategy_hash = _compute_strategy_hash(template_id, params, asset)
+                if strategy_hash not in self._tried_hashes:
+                    break
+            else:
+                # All attempts were duplicates — force random.
+                template_id = self._rng.choice(available)
+                params = _repair_params(template_id, _sample_params(TEMPLATES[template_id], self._rng))
+                strategy_hash = _compute_strategy_hash(template_id, params, asset)
 
         self._tried_hashes.add(strategy_hash)
+        if self._cov is not None:
+            if cell_id is None:              # saturated fallback → record the cell we actually landed in
+                from src.backend.ai.research.coverage import bin_params as _bin_params
+                cell_id = _bin_params(template_id, params)
+            self._cov.mark(template_id, asset, cell_id, strategy_hash)
 
         # Build hypothesis.
         family = "unknown"
@@ -192,6 +229,9 @@ class RuleBasedStrategist:
             "window_start": self.window_start,
             "window_end": self.window_end,
         }
+        if self._cov is not None:                     # v1 coverage provenance
+            spec["cell_id"] = cell_id
+            spec["coverage_saturated"] = coverage_saturated
 
         return hypothesis, spec
 
@@ -386,6 +426,16 @@ class LLMStrategist:
         }
         if self.mode == "regime" and self.goal:
             payload["research_goal"] = self.goal   # user's regime hypothesis (character, not dates)
+        # v1 coverage SOFT nudge: surface a few UNVISITED parameter regions (never performance) so the LLM
+        # prefers unexplored ground. Nudge only — a proposal landing on a visited cell is NOT rejected (that
+        # would waste a billed call → M38/H25 regression + budget-rule violation).
+        if getattr(self._fb, "_cov", None) is not None:
+            regions = {t: self._fb._cov.unexplored_regions(t, asset, 3) for t in templates[:3]}
+            regions = {t: v for t, v in regions.items() if v}
+            if regions:
+                payload["unexplored_regions"] = regions
+                payload["coverage_hint"] = ("Prefer proposing parameters inside an unexplored_regions entry "
+                                            "unless your mechanism specifically requires a different setting.")
         return json.dumps(payload, default=str)
 
     def _build(self, content, asset, templates):
@@ -424,9 +474,14 @@ class LLMStrategist:
         if params != _pre_repair:
             repaired.append("constraint repair (e.g. fast<slow)")
         strategy_hash = _compute_strategy_hash(template_id, params, asset)
-        if strategy_hash in self._fb._tried_hashes:       # dedup vs shared set (F-2)
+        if strategy_hash in self._fb._tried_hashes:       # dedup vs shared set (F-2) — EXACT hash only
             return None
         self._fb._tried_hashes.add(strategy_hash)
+        # v1 coverage: record the cell the LLM landed in (so it counts toward coverage), but do NOT reject
+        # on a cell collision — soft nudge only (see _render). Exact-hash dedup above is unchanged.
+        if getattr(self._fb, "_cov", None) is not None:
+            from src.backend.ai.research.coverage import bin_params as _bin_params
+            self._fb._cov.mark(template_id, asset, _bin_params(template_id, params), strategy_hash)
 
         family = _family_of(template_id)
         hypothesis = Hypothesis(

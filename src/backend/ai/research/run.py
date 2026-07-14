@@ -148,6 +148,8 @@ async def run_research(
     mode: str = "robustness",         # P1: robustness | regime
     window_start: str | None = None,  # P1: regime window start (ignored in robustness)
     window_end: str | None = None,    # P1: regime window end
+    coverage_memory: bool = False,    # v1: cross-run space-filling coverage memory (robustness only); OFF by default
+    user_id: int | None = None,       # v1: coverage scope (per-user); None → shared scope "0"
 ) -> ResearchReport:
     """Run the full autonomous research pipeline.
 
@@ -261,17 +263,28 @@ async def run_research(
     state.train_end = _split or ""    # P2: the split boundary the loop reads for the hold-out ("" = no split)
     # NOTE: `llm`/`ledger` are not yet handed to any agent — W1 wires the Critic.
 
+    # ── v1 cross-run coverage memory (robustness mode only; OFF by default) ──
+    # window_key="" pools all robustness runs (they share the fixed default window); regime windows are each
+    # their own space and are skipped in v1. Coverage changes only WHERE we sample — never the gates/DSR.
+    coverage = None
+    if coverage_memory and mode == "robustness":
+        from src.backend.ai.research.coverage import load_coverage
+        coverage = await load_coverage(
+            scope_key=str(user_id if user_id is not None else 0), assets=assets, window_key="")
+
     # ── Build agents ──────────────────────────────────────────
     # Selection path (strategist + its fallback + critic) sees the TRAIN slice (P2-R1: the fallback too,
     # else an LLM failure silently backtests the full window and the hold-out is no longer unseen).
     if agent_mode == "full_ai" and llm is not None:
         strategist = LLMStrategist(
             llm=llm, ledger=ledger,
-            fallback=RuleBasedStrategist(seed=seed, window_start=train_ws, window_end=train_we),
+            fallback=RuleBasedStrategist(seed=seed, window_start=train_ws, window_end=train_we,
+                                         coverage=coverage),
             window_start=train_ws, window_end=train_we, mode=mode, goal=goal,
         )
     else:
-        strategist = RuleBasedStrategist(seed=seed, window_start=train_ws, window_end=train_we)
+        strategist = RuleBasedStrategist(seed=seed, window_start=train_ws, window_end=train_we,
+                                         coverage=coverage)
     # H29/D8: charge the same realistic effective cost as the CLI (commission + half-spread + slippage),
     # not a bare commission — otherwise AI-discovered strategies are graded ~30% cheaper than documented.
     from src.backend.backtesting.costs.model import effective_commission_pct
@@ -325,6 +338,16 @@ async def run_research(
         control=control,
         enable_leakage_canary=enable_leakage_canary,
     )
+
+    # ── v1 coverage: flush newly-visited cells + stash spread telemetry for the report ──
+    if coverage is not None:
+        try:
+            from src.backend.ai.research.coverage import persist_coverage
+            await persist_coverage(scope_key=str(user_id if user_id is not None else 0),
+                                   window_key="", cov=coverage)
+        except Exception:  # noqa: BLE001 — coverage is a best-effort accelerator; a lost flush is backfillable
+            logger.exception("coverage persist failed (non-fatal)")
+        state.coverage_summary = coverage.summary()
 
     # ── Generate report ───────────────────────────────────────
     report = generate_final_report(state)

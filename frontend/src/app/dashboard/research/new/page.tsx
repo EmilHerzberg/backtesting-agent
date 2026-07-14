@@ -76,7 +76,11 @@ export default function NewRunPage() {
   const [maxRuns, setMaxRuns] = useState(20);
   const [maxSeconds, setMaxSeconds] = useState(600);
   const [target, setTarget] = useState(1);
-  const [seed, setSeed] = useState(42);
+  // Default to a FRESH random seed each visit so back-to-back runs explore different parameters instead of
+  // replaying the identical sequence (the old fixed 42). Pin it under Advanced for reproducibility.
+  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1_000_000_000));
+  // v1: cross-run coverage memory — successive runs dig UNVISITED parameter regions (robustness mode only).
+  const [coverageMemory, setCoverageMemory] = useState(false);
 
   const [showKeyGate, setShowKeyGate] = useState(false);  // F-3: AI mode without a key
   const [stage, setStage] = useState<"config" | "preview">("config");
@@ -190,6 +194,7 @@ export default function NewRunPage() {
           mode,
           window_start: mode === "regime" ? windowStart : null,
           window_end: mode === "regime" ? windowEnd : null,
+          coverage_memory: mode === "robustness" ? coverageMemory : false,
         }),
       });
       router.push(`/dashboard/research/runs/${created.goal_id}`);
@@ -569,6 +574,21 @@ export default function NewRunPage() {
               <div className="grid grid-cols-3 gap-2">
                 <Num label="Seed" v={seed} set={setSeed} />
               </div>
+              {mode === "robustness" && (
+                <label className="flex items-start gap-2 text-xs text-gray-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={coverageMemory}
+                    onChange={(e) => setCoverageMemory(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="text-gray-300">Coverage memory</span> — remember which parameter regions
+                    prior runs explored and steer this run toward <em>unexplored</em> ground (space-filling),
+                    instead of re-testing near-duplicates. Robustness mode only.
+                  </span>
+                </label>
+              )}
               <div>
                 <div className="text-[11px] uppercase font-semibold text-gray-500 mb-1">Templates (optional)</div>
                 <div className="flex flex-wrap gap-1.5">

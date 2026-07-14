@@ -79,6 +79,9 @@ class StartRunRequest(BaseModel):
     mode: str = "robustness"         # robustness | regime
     window_start: str | None = None  # regime window start (YYYY-MM-DD)
     window_end: str | None = None    # regime window end
+    # v1 — cross-run space-filling coverage memory (robustness only). OFF by default; ON makes successive
+    # runs explore UNVISITED parameter regions instead of re-testing near-duplicates.
+    coverage_memory: bool = False
 
     @model_validator(mode="after")
     def _validate_regime_window(self):
@@ -444,6 +447,8 @@ async def _run_and_track(rec: RunRecord, req: StartRunRequest) -> None:
             mode=req.mode,
             window_start=req.window_start,
             window_end=req.window_end,
+            coverage_memory=req.coverage_memory,   # v1 cross-run coverage memory (robustness only)
+            user_id=rec.user_id,                    # coverage scope (per-user)
             on_start=_on_start,
             on_event=_on_event,
             control=lambda: rec.control,

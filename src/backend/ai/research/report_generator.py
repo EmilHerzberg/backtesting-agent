@@ -100,6 +100,10 @@ def generate_final_report(state: ResearchState) -> ResearchReport:
         "total_failures": n_failures,
         "budget_used_runs": state.budget.used_runs,
     }
+    # v1 coverage memory: SPREAD telemetry only (novelty rate + per-template %), never a per-strategy
+    # performance ranking — honest "are we still finding new ground?", not a cherry-picking menu.
+    if getattr(state, "coverage_summary", None):
+        report.strategy_identity.numeric_fields["coverage"] = state.coverage_summary
     report.strategy_identity.narrative = (
         "The autonomous research process evaluated multiple strategy templates "
         "across the requested asset pool, systematically testing hypotheses and "
