@@ -75,8 +75,16 @@ def test_c2_integer_governed_rsi_period_is_one_cell_per_integer():
              for p in range(5, 31)}
     assert len(cells) == 26                                    # 26 integers 5..30, none merged
     assert cov._mode("rsi_reversion", "period") == "int"
-    assert cov._mode("multi_indicator", "rsi_period") == "int"
     assert cov._mode("sma_crossover", "slow_period") == "log"  # ratio-governed periods are unchanged
+
+
+@pytest.mark.finding("coverage-v1")
+def test_c1_multi_indicator_is_uncalibrated_and_coarse():
+    # C1: multi_indicator is near-dead (0-11 in-market bars/9y) → uncalibratable. Its grid is deliberately
+    # COARSE (few distinct strategies), NOT the ~13k the fine analogs implied, and it is flagged so v2 floors
+    # its unreliable count out of the deflated-Sharpe N.
+    assert "multi_indicator" in cov._UNCALIBRATED
+    assert len(feasible_cells("multi_indicator")) < 300       # coarse (was ~13k with fine analogs)
 
 
 # ── AT-2: feasibility — the SMA dead corner is excluded and every kept cell is self-consistent ─────

@@ -42,18 +42,26 @@ mean-reverting staples, index) over the fixed window **2015-01-01 … 2023-12-31
 3. **Log-spacing for periods is confirmed** — within a parameter the JND-*ratio* stays roughly constant across
    low/mid/high base values (e.g. sma slow: 0.12 / 0.16 / 0.16).
 4. **The true meaningful space is much larger than v1 assumed.** Feasible-cell counts per asset:
-   sma **130**, macd **196**, bollinger **364**, rsi **4,394**, multi_indicator **13,013** (was ~110 / … / ~324
-   under v1; rsi/multi updated after the C2 integer-period correction below). This is itself important: there are
-   far more meaningfully-distinct strategies than the coarse grid implied — so "cover the whole space" is a large
-   undertaking (coverage % stays low in normal use), and the v2 DSR correction gets a **larger, more honest** N.
+   sma **130**, macd **196**, bollinger **364**, rsi **4,394**, multi_indicator **96** (was ~110 / … / ~324
+   under v1; rsi updated after the C2 integer-period correction, multi after the C1 near-dead finding — both
+   below). The tradeable templates have far more meaningfully-distinct strategies than the coarse grid implied —
+   so "cover the whole space" is a large undertaking (coverage % stays low in normal use), and the v2 DSR
+   correction gets a **larger, more honest** N (excluding the uncalibratable multi_indicator).
 5. **Integer resolution correctly caps the fine grids** — where the calibrated ratio implies more period cells
    than the integer range supports, cells with no distinct integer representative have no drawable center and
    are correctly dropped from `feasible_cells` (so the drawable count reflects genuinely-distinct strategies).
 
+## C1 — multi_indicator is uncalibratable (near-dead), 2026-07-14
+Measured: `multi_indicator` holds a position for **0–11 bars over 9 years** across all 6 assets (its oversold
+buy and price-below-SMA exit nearly cancel — it enters and exits within a bar or two). It cannot be
+signal-flip-calibrated, and its parameters barely produce distinct strategies. So its fine analog fallbacks
+(which implied ~13,013 cells) were misleading — those are ~13k copies of the same non-trading null. **Applied:**
+a deliberately **coarse** grid (period r=0.5, threshold step 8) → **96 cells**, and it is flagged
+(`coverage.py _UNCALIBRATED`) so v2 **floors/excludes its unreliable count from the deflated-Sharpe N**.
+
 ## Limitations (honest)
 - One metric (position disagreement), one primary threshold (T=0.05), 6 assets, one window. The values are
-  **grounded but approximate** — good enough to size the grid, not a physical constant. `multi_indicator`
-  under-trades on the canonical settings, so its params use indicator-analog fallbacks (sma→0.16, rsi→0.08).
+  **grounded but approximate** — good enough to size the grid, not a physical constant.
 - Cross-asset spread exists (a period JND on a calm staple differs from a volatile tech name); we take the
   median. A volatility-scaled resolution is a possible future refinement.
 

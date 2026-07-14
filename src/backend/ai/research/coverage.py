@@ -38,17 +38,17 @@ from itertools import product
 GRID_VERSION = "v2"
 
 # PERIOD dims: log ratio r (one cell per multiplicative 1+r band). Short oscillators (rsi/bollinger period)
-# flip on a ~5-8% change; sma fast is nearly inert (~30%).
+# flip on a ~5-8% change; sma fast is nearly inert (~30%). multi_indicator is COARSE — see _UNCALIBRATED.
 _PERIOD_RATIO = {
     ("sma_crossover", "fast_period"): 0.30, ("sma_crossover", "slow_period"): 0.16,
     ("bollinger_breakout", "period"): 0.06,
     ("macd_cross", "fast"): 0.20, ("macd_cross", "slow"): 0.22, ("macd_cross", "signal_period"): 0.20,
-    ("multi_indicator", "sma_period"): 0.16,  # analog (multi under-trades); rsi_period is integer-governed below
+    ("multi_indicator", "sma_period"): 0.50, ("multi_indicator", "rsi_period"): 0.50,  # coarse (uncalibratable)
 }
 # THRESHOLD dims: absolute RSI points. MULTIPLIER dims: absolute std-dev units.
 _THRESHOLD_STEP = {
     ("rsi_reversion", "buy_threshold"): 2.0, ("rsi_reversion", "sell_threshold"): 2.0,
-    ("multi_indicator", "rsi_buy"): 2.0, ("multi_indicator", "rsi_sell"): 2.0,
+    ("multi_indicator", "rsi_buy"): 8.0, ("multi_indicator", "rsi_sell"): 8.0,   # coarse (uncalibratable)
 }
 _MULTIPLIER_STEP = {("bollinger_breakout", "std_dev"): 0.15}
 # Per-kind medians — fallback for any (template, param) pair not individually calibrated.
@@ -56,7 +56,13 @@ _KIND_FALLBACK = {"period": 0.16, "threshold": 2.0, "multiplier": 0.15}
 # INTEGER-GOVERNED periods (noise-floor validation C2): for these, a +1-integer change already flips
 # ≫5% of positions at EVERY base (threshold-crossing on the RSI period amplifies a 1-day shift), so the JND
 # is below one integer — a log ratio would merge genuinely-distinct integers. Each integer is its own cell.
-_INTEGER_PERIOD = {("rsi_reversion", "period"), ("multi_indicator", "rsi_period")}
+_INTEGER_PERIOD = {("rsi_reversion", "period")}
+# UNCALIBRATED templates: multi_indicator is NEAR-DEAD on liquid US equities 2015-2023 — it holds a position
+# for 0-11 bars over 9 years (its oversold-buy and price-below-SMA-exit conditions almost cancel), so its JND
+# cannot be signal-flip-measured and its params barely produce distinct strategies. It gets a deliberately
+# COARSE grid (≈96 cells, not the 13k the fine analogs implied) to reflect that low distinctness; its cell
+# count is UNRELIABLE and MUST be floored/excluded from the v2 deflated-Sharpe N (see COVERAGE-MEMORY-V2-PLAN).
+_UNCALIBRATED = frozenset({"multi_indicator"})
 
 
 def _mode(template_id: str, param_name: str) -> str:

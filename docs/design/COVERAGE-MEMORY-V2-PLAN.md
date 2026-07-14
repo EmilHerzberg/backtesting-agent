@@ -55,9 +55,12 @@ cell-Sharpe correlation model (Galwey / Li-Ji effective-M, or 1+(N-1)ρ̄), **ne
 independent than random — supporting, not establishing, the near-independence approximation.)
 
 ## Calibration items to tighten before N (from the same review)
-- **C1 — multi_indicator is uncalibrated** and carries the largest count (11,830); under-trading means its true
-  JND is *coarser*, so the analog fallbacks **over-count**. (Damped: √(ln N) means a 2× error there moves `sr0`
-  only ~±4.4%.) Measure it on a window/settings where it trades, or floor/exclude it from N.
+- **C1 — multi_indicator is UNCALIBRATABLE (near-dead). ✅ DONE (2026-07-14).** Measured: it holds a position
+  for 0–11 bars over 9 years across 6 assets (oversold buy + price-below-SMA exit nearly cancel), so its JND
+  can't be signal-flip-measured and its params barely produce distinct strategies. The fine analogs implied
+  ~13k cells that are ~13k copies of the same non-trading null. **Applied:** a coarse grid (96 cells) +
+  `coverage.py _UNCALIBRATED` flag. **v2 MUST floor/exclude multi's count from N** — do not feed 96 (or 13k)
+  as a distinct-hypothesis count for a strategy that doesn't trade.
 - **C2 — Noise floor + integer resolution. ✅ DONE (2026-07-14, `scripts/validate_grid_noise.py`).**
   Determinism = 0.0. RSI period is integer-governed at *every* base (+1-int flips 11–23% of positions) → applied
   one-cell-per-integer for `(rsi_reversion, period)` + `(multi_indicator, rsi_period)` (coverage.py
