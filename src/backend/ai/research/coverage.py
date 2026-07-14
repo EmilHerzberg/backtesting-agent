@@ -10,8 +10,15 @@ DESIGN: docs/design/COVERAGE-MEMORY-V1.md.
 
 OVERFITTING-NEUTRAL (v1 quality gate): this module changes only WHERE we sample. It never reads a cell's
 performance to steer sampling (that would be exploitation → overfitting), and nothing here feeds the
-significance path (the deflated-Sharpe multiple-testing count stays per-run, untouched). `best_sharpe` is
-persisted as pure telemetry for the coverage report and MUST NOT be consulted by the sampler.
+significance path (the deflated-Sharpe multiple-testing count stays per-run, untouched). v1 stores NO
+per-cell performance at all — coverage is a pure spatial memory (visited cells + counts), so there is no
+performance column for a future edit to accidentally wire into the sampler.
+
+CROSS-RUN HONESTY (shipped caveat): coverage accumulates the visited set across runs, but each run's
+significance still corrects only for THAT run's trials. So a campaign that fills the grid and then
+cherry-picks the best surviving cell has an UNCORRECTED cumulative multiple-testing burden. v1 surfaces no
+cross-run winner list, and `summary()` ships a plain-language caveat saying exactly this; the cross-run
+correction itself is v2 (it needs the calibrated grid).
 
 Grid resolution is a-priori for v1 (tagged grid_version) — a signal-flip calibration replaces it in v2.
 """
@@ -224,9 +231,19 @@ class CoverageMap:
         cand = sorted(feasible_cells(template_id) - self.visited.get((template_id, asset), set()))
         return [cell_center(template_id, c) for c in cand[:k]]
 
+    # Digit-free honesty caveat shipped with every coverage summary (the review's "smallest honest guard"):
+    # coverage % accumulates ACROSS runs but each run's significance corrects only for its own trials.
+    CROSS_RUN_CAVEAT = (
+        "Coverage percentage measures how much of the parameter space has been searched across all your "
+        "runs. Each run's significance check (the deflated Sharpe) accounts only for that run's own trials — "
+        "it does NOT correct for the cumulative search across many runs. If you pick the best-looking "
+        "strategy across a long campaign, treat it as a fresh hypothesis to re-validate out-of-sample, not a "
+        "proven edge."
+    )
+
     def summary(self) -> dict:
-        """Digit-bearing coverage stats for the report's numeric_fields — SPREAD ONLY (novelty + per-template
-        pct). Deliberately carries NO per-cell/per-strategy performance ranking (that would be a
+        """Coverage stats for the report — SPREAD ONLY (novelty + per-template pct) plus the cross-run
+        honesty caveat. Deliberately carries NO per-cell/per-strategy performance ranking (that would be a
         cherry-picking menu; the overfitting quality gate forbids it)."""
         by_t: dict[str, list[float]] = {}
         for (t, a) in self.visited:
@@ -237,6 +254,7 @@ class CoverageMap:
             "cells_visited": sum(len(v) for v in self.visited.values()),
             "pct_covered_by_template": per,
             "grid_version": GRID_VERSION,
+            "caveat": self.CROSS_RUN_CAVEAT,
         }
 
 

@@ -5,7 +5,6 @@ post-v1 focused review interrogates. Tests are grouped by acceptance criterion.
 """
 from __future__ import annotations
 
-import inspect
 
 import numpy as np
 import pytest
@@ -93,16 +92,33 @@ def test_at2_non_constrained_templates_are_fully_feasible():
 # ── AT-7: OVERFITTING-NEUTRALITY (the quality gate) ────────────────────────────────────────────────
 @pytest.mark.finding("coverage-v1")
 def test_at7_sampler_never_consults_performance():
-    # Structural guard: the cell-selection code must reference NO performance signal (steering by
-    # performance = exploitation = overfitting). Geometry only.
-    perf_tokens = ("sharpe", "best_sharpe", "performance", "profit", "survived", "died", "return_")
-    for fn in (CoverageMap.pick_cell, CoverageMap.mark, cov.feasible_cells, cov.bin_params, cov._dist):
-        src = inspect.getsource(fn).lower()
-        assert not any(tok in src for tok in perf_tokens), fn.__name__
-    # the in-memory sampling map carries NO performance field at all
+    # Structural guard (widened per the v1 review): EVERY function on the selection path — cell pick AND
+    # template rank AND the region/center helpers — must reference NO performance signal (steering by
+    # performance = exploitation = overfitting). Token list broadened beyond "sharpe" to the common
+    # aliases a future exploitation signal might use.
+    # Check the NAMES each selection function actually references (co_names — attrs/globals it reads),
+    # not raw source, so a docstring saying "never performance" can't false-trip. Catches a real
+    # `self.best_sharpe` / `row.pnl` read; the broad token list covers common exploitation-signal aliases.
+    perf_tokens = ("sharpe", "performance", "profit", "survived", "died",
+                   "pnl", "edge", "score", "fitness", "reward", "alpha", "best_")
+    guarded = (CoverageMap.pick_cell, CoverageMap.mark, CoverageMap.pct_covered,
+               CoverageMap.unexplored_regions, cov.feasible_cells, cov.bin_params, cov.cell_center,
+               cov._dist, RuleBasedStrategist._choose_spacefilling)
+    for fn in guarded:
+        referenced = " ".join(fn.__code__.co_names).lower()
+        assert not any(tok in referenced for tok in perf_tokens), (fn.__name__, referenced)
     m = CoverageMap()
-    assert not hasattr(m, "best_sharpe")
-    assert "sharpe" not in "".join(vars(m).keys()).lower()
+    assert "sharpe" not in "".join(vars(m).keys()).lower()   # in-memory map has no performance field
+
+
+@pytest.mark.finding("coverage-v1")
+def test_at7_coverage_table_has_no_performance_column():
+    # Architectural neutrality (stronger than the source grep): the persisted coverage row physically
+    # carries NO performance column, so no future writer can populate a Sharpe the sampler might read.
+    from src.backend.ai.research.db_models import ResearchCoverageDB
+    cols = {c.name.lower() for c in ResearchCoverageDB.__table__.columns}
+    banned = ("sharpe", "return", "profit", "pnl", "survived", "died", "best", "score", "edge", "alpha")
+    assert not any(b in c for c in cols for b in banned), cols
 
 
 @pytest.mark.finding("coverage-v1")
@@ -113,9 +129,21 @@ def test_at7_summary_is_spread_only_no_cherry_pick_menu():
         c = m.pick_cell("sma_crossover", "AAPL", rng)
         m.mark("sma_crossover", "AAPL", c)
     s = m.summary()
-    # spread stats only — NO per-cell / per-strategy performance ranking (a cherry-picking surface)
-    assert set(s.keys()) == {"novelty_rate", "cells_visited", "pct_covered_by_template", "grid_version"}
-    assert "sharpe" not in str(s).lower()
+    # spread stats + the honesty caveat ONLY — NO per-cell/per-strategy performance ranking
+    assert set(s.keys()) == {"novelty_rate", "cells_visited", "pct_covered_by_template", "grid_version", "caveat"}
+    # the per-template datum is a COVERAGE FRACTION in [0,1], never a performance number to sort on
+    assert all(0.0 <= v <= 1.0 for v in s["pct_covered_by_template"].values())
+
+
+@pytest.mark.finding("coverage-v1")
+def test_at7_summary_ships_cross_run_honesty_caveat():
+    # The review's HIGH finding: coverage % accumulates across runs but significance is per-run only.
+    # summary() must ship a plain-language caveat that says so — no silent lying-by-omission.
+    s = CoverageMap().summary()
+    cav = s["caveat"].lower()
+    assert "per" in cav or "that run" in cav              # significance is per-run…
+    assert "out-of-sample" in cav or "re-validate" in cav  # …treat a campaign winner as a hypothesis
+    assert not any(ch.isdigit() for ch in s["caveat"])   # digit-free (safe for the report narrative)
 
 
 # ── AT-8 (map half): novelty rate is computed ──────────────────────────────────────────────────────
@@ -313,7 +341,11 @@ async def test_at8_run_surfaces_coverage_spread_telemetry(monkeypatch, frozen_oh
         ident = next(s for s in serialize_report(report)["sections"] if s["key"] == "strategy_identity")
         c = ident["numeric_fields"].get("coverage")
         assert c and "novelty_rate" in c and c["cells_visited"] > 0 and c["grid_version"] == "v1"
-        assert "sharpe" not in str(c).lower() and "best" not in str(c).lower()   # spread only, no menu
+        # spread only: the per-template map holds COVERAGE FRACTIONS, and there is no performance ranking key
+        assert all(0.0 <= v <= 1.0 for v in c["pct_covered_by_template"].values())
+        assert not any(k in c for k in ("best_sharpe", "best_cell", "ranking", "top_cells"))
+        # the cross-run honesty caveat reaches the user in the (digit-free) report narrative
+        assert "does not correct" in ident["narrative"].lower() or "re-validate" in ident["narrative"].lower()
     finally:
         await drop_tables(eng)
         await eng.dispose()

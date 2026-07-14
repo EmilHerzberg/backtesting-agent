@@ -73,11 +73,23 @@ loaded coverage snapshot)"; with the flag OFF the old seed-only guarantee holds 
 
 ## Overfitting-neutrality (the v1 quality gate — AT-7)
 v1 changes only **where** we sample. It must be provable that:
-1. the significance path is untouched — `gatekeeper` / DSR `n_trials_global` inputs are **identical ON vs OFF**;
-2. `best_sharpe` is **never** consulted by the sampler;
+1. the significance **mechanism** is coverage-blind — the `gatekeeper` / DSR / OOS formula + wiring reference
+   coverage nowhere. (The concrete `n_trials`/variance *values* differ ON vs OFF because different points are
+   sampled — exactly like changing the seed — but they are computed by the identical coverage-blind formula;
+   coverage feeds **no performance signal** into the count/variance/threshold. This is *neutral*, not "byte-identical
+   inputs" — an early wording that overclaimed.);
+2. the sampler consults **no** performance — v1 stores no per-cell Sharpe/survived/died at all (there is no
+   performance column for a future edit to wire in);
 3. **no** cross-cell / cross-asset "winner" ranking (a cherry-picking menu) is emitted anywhere.
-The post-v1 focused review adversarially interrogates exactly this. (The full campaign-wide multiple-testing
-correction is v2 — it needs the calibrated grid.)
+
+**Shipped cross-run honesty caveat (review HIGH finding).** Coverage accumulates the visited set across runs, but
+each run's deflated-Sharpe still corrects only for *that run's* trials. So a campaign that fills the grid and then
+cherry-picks the best surviving cell has an **uncorrected** cumulative multiple-testing burden. v1 surfaces no
+cross-run winner list **and** ships a plain-language caveat (`CoverageMap.CROSS_RUN_CAVEAT`, appended to the report
+narrative) telling the user exactly this. The cumulative cross-run DSR correction itself is **v2** (needs the
+calibrated grid). Two smaller items also deferred to v2 measurement: (a) whether maximin's box-extreme preference
+systematically shifts per-run `n_trials` vs uniform (unproven, directional — the OOS lockbox remains the real
+arbiter meanwhile); (b) persisting per-cell survival so v2's cross-run correction has clean inputs.
 
 ## Functional acceptance tests (ATDD — written first, all must pass)
 - **AT-1** grid: same-cell collapse of near-duplicates; meaningful step ⇒ different cell.
@@ -87,8 +99,9 @@ correction is v2 — it needs the calibrated grid.)
   flag OFF + same seed the two runs are **identical** (the bug this fixes).
 - **AT-5** flag OFF ⇒ proposals identical to the current baseline.
 - **AT-6** LLM: `_render` carries `unexplored_regions`; a cell-collision does not increment the fallback counter.
-- **AT-7** overfitting-neutral: DSR `n_trials_global` inputs identical ON vs OFF; sampler never touches
-  `best_sharpe`; no cross-cell ranking emitted.
+- **AT-7** overfitting-neutral: the significance path references coverage nowhere; the sampler references no
+  performance signal (and there is no performance column to read); no cross-cell ranking emitted; the summary
+  ships the cross-run honesty caveat.
 - **AT-8** novelty-rate computed + surfaced in the report.
 - **AT-9** persist → load round-trips the visited set; backfill reconstructs cells from candidates/failures.
 - **AT-10** saturated space raises a signal but does NOT auto-stop the loop.

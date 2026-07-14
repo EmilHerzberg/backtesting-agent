@@ -120,6 +120,10 @@ def generate_final_report(state: ResearchState) -> ResearchReport:
             "this narrative fell back to the built-in rule-based engine. Read these results as "
             "rule-based, not AI-driven. " + report.strategy_identity.narrative
         )
+    # v1 coverage: append the cross-run honesty caveat LAST (digit-free) — the user must be told that the
+    # per-run significance does NOT correct for the cumulative cross-run search (review HIGH finding).
+    if getattr(state, "coverage_summary", None) and state.coverage_summary.get("caveat"):
+        report.strategy_identity.narrative += " " + state.coverage_summary["caveat"]
 
     # ── Hypothesis ─────────────────────────────────────────────
     templates_tried = set()

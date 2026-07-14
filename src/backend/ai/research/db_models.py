@@ -204,11 +204,10 @@ class ResearchCoverageDB(Base):
     cell_id: Mapped[str] = mapped_column(String(64), default="")
     exemplar_hash: Mapped[str] = mapped_column(String(64), default="")              # one strategy_hash that landed here (join to candidates/failures)
     visit_count: Mapped[int] = mapped_column(Integer, default=0)
-    survived_count: Mapped[int] = mapped_column(Integer, default=0)
-    died_count: Mapped[int] = mapped_column(Integer, default=0)
-    # TELEMETRY ONLY (exhaustion report). The sampler MUST NEVER read this — steering toward high-Sharpe
-    # cells is exploitation → overfitting, the exact thing coverage is designed NOT to do (v1 quality gate).
-    best_sharpe: Mapped[float] = mapped_column(Float, default=0.0)
+    # v1 deliberately stores NO per-cell performance (Sharpe / survived / died). Coverage is a pure SPATIAL
+    # memory — recording performance here would invite a future writer to steer sampling toward high-Sharpe
+    # cells (exploitation → overfitting, the exact thing coverage must NOT do). Any performance-aware
+    # scoring is a v2 decision that ships WITH its cross-run multiple-testing correction, not before.
     last_goal_id: Mapped[str] = mapped_column(String(40), default="")
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
