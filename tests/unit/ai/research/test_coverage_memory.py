@@ -141,6 +141,18 @@ def test_at7_summary_is_spread_only_no_cherry_pick_menu():
 
 
 @pytest.mark.finding("coverage-v1")
+def test_pct_covered_never_exceeds_one():
+    # Quant-review fix: the saturation/LLM path can mark a reachable-but-not-drawable cell (outside
+    # feasible_cells), which used to push pct_covered above 100%. It must clamp to the feasible set.
+    m = CoverageMap()
+    for c in feasible_cells("sma_crossover"):
+        m.mark("sma_crossover", "AAPL", c)
+    m.mark("sma_crossover", "AAPL", "v2:99-99")        # a reachable-but-infeasible / out-of-set cell
+    assert m.pct_covered("sma_crossover", "AAPL") == pytest.approx(1.0)
+    assert m.pct_covered("sma_crossover", "AAPL") <= 1.0
+
+
+@pytest.mark.finding("coverage-v1")
 def test_at7_summary_ships_cross_run_honesty_caveat():
     # The review's HIGH finding: coverage % accumulates across runs but significance is per-run only.
     # summary() must ship a plain-language caveat that says so — no silent lying-by-omission.

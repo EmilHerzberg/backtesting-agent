@@ -59,5 +59,17 @@ mean-reverting staples, index) over the fixed window **2015-01-01 … 2023-12-31
 
 ## Applied
 `src/backend/ai/research/coverage.py`: per-parameter `_PERIOD_RATIO` / `_THRESHOLD_STEP` / `_MULTIPLIER_STEP`
-tables + per-kind fallback; **`GRID_VERSION = "v2"`** (so any v1-persisted cells never collide). This grid is
-the input the v2 cross-run deflated-Sharpe correction will use as its pre-registered sweep-size N.
+tables + per-kind fallback; **`GRID_VERSION = "v2"`** (so any v1-persisted cells never collide). Reproducible
+source committed: `scripts/calibrate_coverage_grid.py` + raw per-asset disagreement curves in
+`calibration-v2-results.json`.
+
+## Quant/statistics review (2026-07-14) — this grid is for SIZING THE SAMPLER, not yet for the DSR N
+An adversarial quant review confirmed the grid **math** is correct and the metric choice is sound for its
+shipped purpose (deciding where the sampler digs). It also found that using `len(feasible_cells)` as the
+deflated-Sharpe multiple-testing **N** — the v2 intent — is **not yet sound**: adjacent cells are ~1 JND apart
+so they are *correlated, not independent* trials (raw count = a conservative upper bound, over-rejects = safe
+but can be vacuous); the full grid ≠ the realized search size; N and the variance V must be co-scoped;
+`n_trials` is dual-purpose (multiplicity size AND sample-adequacy guard); and `multi_indicator` — the largest
+count — was never actually calibrated (under-trades → its true JND is *coarser*, so the analog fallbacks
+over-count). These are **not v1 issues** (coverage is flag-OFF and the significance path is coverage-blind).
+The full findings + the minimal correct recipe for v2 are in **`COVERAGE-MEMORY-V2-PLAN.md`**.

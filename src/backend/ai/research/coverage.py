@@ -250,8 +250,15 @@ class CoverageMap:
         return (sum(self._recent) / len(self._recent)) if self._recent else 1.0
 
     def pct_covered(self, template_id: str, asset: str) -> float:
-        feas = self._feasible_count(template_id)
-        return (len(self.visited.get((template_id, asset), set())) / feas) if feas else 1.0
+        # Count only visited cells that are in the DRAWABLE feasible set, so the ratio can never exceed 1.0.
+        # (The saturation fallback + the LLM path can mark a reachable-but-not-center-self-mapping cell — e.g.
+        # an sma point that needs no repair but whose cell CENTER repairs away — which is outside feasible_cells.
+        # Reconciling "drawable" vs "reachable" into one canonical cell set is a v2 prerequisite before this
+        # count can serve as the deflated-Sharpe N; see docs/design/COVERAGE-MEMORY-V2-PLAN.md.)
+        feas = feasible_cells(template_id)
+        if not feas:
+            return 1.0
+        return len(self.visited.get((template_id, asset), set()) & feas) / len(feas)
 
     def unexplored_regions(self, template_id: str, asset: str, k: int = 3) -> list[dict]:
         """A few unvisited cell CENTERS — the soft nudge fed to the LLM (regions, never performance)."""
