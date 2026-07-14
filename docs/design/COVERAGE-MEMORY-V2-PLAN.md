@@ -81,11 +81,12 @@ independent than random — supporting, not establishing, the near-independence 
   widened (that is a `grid_version` bump).
 
 ## Functional reconciliation (small, but do before N)
-- **F1 — feasible vs reachable.** `feasible_cells` (center-self-mapping, the sampler's *draw* domain) slightly
-  **under**-counts the *reachable* set (an sma point needing no repair can bin into a cell whose center repairs
-  away — 130 vs 132). For DSR-N the reachable count is the right quantity. Define one canonical cell set and use
-  it for both the denominator and N. (v1 telemetry bug `pct_covered > 100%` — fixed by clamping to
-  `visited ∩ feasible` — is the visible symptom of this same inconsistency.)
+- **F1 — feasible vs reachable. ✅ DONE (2026-07-14).** Added `coverage.reachable_cells(t)` — the canonical
+  distinct-strategy set (enumerated over the real sampler lattice, repaired then binned): a superset of
+  `feasible_cells` (the maximin draw domain), differing only at sma's constraint boundary (feasible 130 vs
+  reachable 132; identical for the other four). `pct_covered` now divides by `reachable_cells` (visited ⊆
+  reachable → ratio ≤ 1.0), and **v2's DSR N must use `reachable_cells`, not `feasible_cells`.** The maximin
+  sampler keeps drawing from `feasible_cells`; the 2 extra sma cells are reachable via the uniform/LLM fallback.
 
 ## Minimal correct recipe (what v2 should actually build)
 1. **N = size of the pre-registered selection set** = Σ over every (template, asset) in the campaign's selection

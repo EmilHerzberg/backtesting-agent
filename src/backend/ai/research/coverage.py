@@ -210,6 +210,40 @@ def feasible_cells(template_id: str) -> frozenset[str]:
     return frozen
 
 
+_REACHABLE_CACHE: dict[tuple[str, str], frozenset[str]] = {}
+
+
+def reachable_cells(template_id: str) -> frozenset[str]:
+    """The canonical set of DISTINCT (post-repair) strategies the sampler can actually produce — the count for
+    the coverage denominator and (v2) the deflated-Sharpe N. A SUPERSET of feasible_cells (the maximin draw
+    domain): a few constraint-boundary cells (sma) are reachable by a non-center point even though their
+    geometric center repairs away (F1: feasible=130 vs reachable=132 for sma; identical for the other four).
+    Enumerated over the real sampler lattice — integer values for int dims, one cell-center per float cell
+    (finer adds no new cells) — repaired then binned. Cached."""
+    key = (template_id, GRID_VERSION)
+    cached = _REACHABLE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    from src.backend.ai.research.strategist import _repair_params
+
+    space = _template_space(template_id)
+    names = _sorted_params(template_id)
+    axes: list[list[float]] = []
+    for nm in names:
+        spec = space[nm]
+        lo, hi = float(spec["low"]), float(spec["high"])
+        if spec.get("type") == "int":
+            axes.append([float(i) for i in range(int(lo), int(hi) + 1)])
+        else:
+            axes.append([_dim_center(template_id, nm, lo, hi, c, False) for c in range(_dim_n(template_id, nm, lo, hi))])
+    out: set[str] = set()
+    for combo in product(*axes):
+        out.add(bin_params(template_id, _repair_params(template_id, dict(zip(names, combo)))))
+    frozen = frozenset(out)
+    _REACHABLE_CACHE[key] = frozen
+    return frozen
+
+
 def _dist(a: tuple[int, ...], b: tuple[int, ...], ns: list[int]) -> float:
     """Distance between two cells in per-dim-normalized index space (each axis scaled by its cell count, so
     period spread is relative and threshold spread absolute — 'farthest' means economically farthest)."""
@@ -272,15 +306,12 @@ class CoverageMap:
         return (sum(self._recent) / len(self._recent)) if self._recent else 1.0
 
     def pct_covered(self, template_id: str, asset: str) -> float:
-        # Count only visited cells that are in the DRAWABLE feasible set, so the ratio can never exceed 1.0.
-        # (The saturation fallback + the LLM path can mark a reachable-but-not-center-self-mapping cell — e.g.
-        # an sma point that needs no repair but whose cell CENTER repairs away — which is outside feasible_cells.
-        # Reconciling "drawable" vs "reachable" into one canonical cell set is a v2 prerequisite before this
-        # count can serve as the deflated-Sharpe N; see docs/design/COVERAGE-MEMORY-V2-PLAN.md.)
-        feas = feasible_cells(template_id)
-        if not feas:
+        # Denominator = the canonical REACHABLE set (every distinct strategy the sampler can produce, incl. the
+        # few sma constraint-boundary cells feasible_cells omits). visited ⊆ reachable, so the ratio ≤ 1.0.
+        reach = reachable_cells(template_id)
+        if not reach:
             return 1.0
-        return len(self.visited.get((template_id, asset), set()) & feas) / len(feas)
+        return len(self.visited.get((template_id, asset), set()) & reach) / len(reach)
 
     def unexplored_regions(self, template_id: str, asset: str, k: int = 3) -> list[dict]:
         """A few unvisited cell CENTERS — the soft nudge fed to the LLM (regions, never performance)."""

@@ -163,13 +163,27 @@ def test_at7_summary_is_spread_only_no_cherry_pick_menu():
 
 
 @pytest.mark.finding("coverage-v1")
+def test_f1_reachable_is_canonical_superset_of_feasible():
+    # F1: reachable_cells (the canonical distinct-strategy count for the denominator + v2 N) is a superset of
+    # feasible_cells (the maximin draw domain). They differ ONLY at sma's constraint boundary (2 cells); the
+    # other four templates are identical.
+    from src.backend.ai.research.coverage import reachable_cells
+    for t in ("sma_crossover", "rsi_reversion", "bollinger_breakout", "macd_cross", "multi_indicator"):
+        assert feasible_cells(t) <= reachable_cells(t)
+    assert len(reachable_cells("sma_crossover")) == 132 and len(feasible_cells("sma_crossover")) == 130
+    for t in ("rsi_reversion", "bollinger_breakout", "macd_cross", "multi_indicator"):
+        assert reachable_cells(t) == feasible_cells(t)
+
+
+@pytest.mark.finding("coverage-v1")
 def test_pct_covered_never_exceeds_one():
-    # Quant-review fix: the saturation/LLM path can mark a reachable-but-not-drawable cell (outside
-    # feasible_cells), which used to push pct_covered above 100%. It must clamp to the feasible set.
+    # Quant-review fix: the saturation/LLM path can mark a cell outside the canonical set, which used to push
+    # pct_covered above 100%. The denominator is reachable_cells and visited ⊆ reachable → ratio ≤ 1.0.
+    from src.backend.ai.research.coverage import reachable_cells
     m = CoverageMap()
-    for c in feasible_cells("sma_crossover"):
+    for c in reachable_cells("sma_crossover"):
         m.mark("sma_crossover", "AAPL", c)
-    m.mark("sma_crossover", "AAPL", "v2:99-99")        # a reachable-but-infeasible / out-of-set cell
+    m.mark("sma_crossover", "AAPL", "v2:99-99")        # a bogus out-of-set cell
     assert m.pct_covered("sma_crossover", "AAPL") == pytest.approx(1.0)
     assert m.pct_covered("sma_crossover", "AAPL") <= 1.0
 
