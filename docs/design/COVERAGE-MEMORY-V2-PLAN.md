@@ -58,15 +58,18 @@ independent than random — supporting, not establishing, the near-independence 
 - **C1 — multi_indicator is uncalibrated** and carries the largest count (11,830); under-trading means its true
   JND is *coarser*, so the analog fallbacks **over-count**. (Damped: √(ln N) means a 2× error there moves `sr0`
   only ~±4.4%.) Measure it on a window/settings where it trades, or floor/exclude it from N.
-- **C2 — Noise floor + integer resolution.** T=0.05 was never validated against the same-param noise floor
-  (setting-vs-itself, ±1-integer step). At the fine end (rsi/bollinger low period) the ±1-integer step exceeds
-  T, so integers — not the calibrated r — set the operative resolution there. Measure and report the floor;
-  document that integer resolution governs low-period cells.
+- **C2 — Noise floor + integer resolution. ✅ DONE (2026-07-14, `scripts/validate_grid_noise.py`).**
+  Determinism = 0.0. RSI period is integer-governed at *every* base (+1-int flips 11–23% of positions) → applied
+  one-cell-per-integer for `(rsi_reversion, period)` + `(multi_indicator, rsi_period)` (coverage.py
+  `_INTEGER_PERIOD`); rsi 3,380→4,394, multi 11,830→13,013. sma/macd periods confirmed ratio-governed (floor
+  ≪ T). Threshold ≈ 1 pt near the active region (step 2 documented as coarse-end). Full findings in
+  COVERAGE-CALIBRATION.md §Noise-floor.
 - **C3 — Median across 6 in-sample assets, applied per-asset**, leaves a directional leniency on high-vol names
   (the false-discovery direction). Since the count feeds a *penalty*, prefer a conservative high-count quantile
   or volatility-scaled resolution over the median.
-- **C4 — Warmup.** Calibration ran `warmup_bars=0`; unconverged long-period indicators can bias long-period
-  JNDs downward. Re-measure discarding `max(period)` warmup bars.
+- **C4 — Warmup. ✅ DONE (2026-07-14) — non-issue.** Re-measuring long-period steps with `max(period)` warmup
+  bars discarded moves the disagreement by ≤ 0.001 (the union-in-market normalisation already excludes the flat
+  warmup period). No re-measurement needed.
 - **C5 — Provenance/pre-registration.** N is data-informed (calibrated in-sample on the same 6 assets/window),
   so it is a *frozen, data-informed pre-registered bound*, not an a-priori constant — label it as such. The
   harness + raw curves are now committed (`scripts/calibrate_coverage_grid.py`,

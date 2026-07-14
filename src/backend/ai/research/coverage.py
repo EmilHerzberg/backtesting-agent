@@ -41,10 +41,9 @@ GRID_VERSION = "v2"
 # flip on a ~5-8% change; sma fast is nearly inert (~30%).
 _PERIOD_RATIO = {
     ("sma_crossover", "fast_period"): 0.30, ("sma_crossover", "slow_period"): 0.16,
-    ("rsi_reversion", "period"): 0.08,
     ("bollinger_breakout", "period"): 0.06,
     ("macd_cross", "fast"): 0.20, ("macd_cross", "slow"): 0.22, ("macd_cross", "signal_period"): 0.20,
-    ("multi_indicator", "sma_period"): 0.16, ("multi_indicator", "rsi_period"): 0.08,  # analogs (multi under-trades)
+    ("multi_indicator", "sma_period"): 0.16,  # analog (multi under-trades); rsi_period is integer-governed below
 }
 # THRESHOLD dims: absolute RSI points. MULTIPLIER dims: absolute std-dev units.
 _THRESHOLD_STEP = {
@@ -54,6 +53,18 @@ _THRESHOLD_STEP = {
 _MULTIPLIER_STEP = {("bollinger_breakout", "std_dev"): 0.15}
 # Per-kind medians — fallback for any (template, param) pair not individually calibrated.
 _KIND_FALLBACK = {"period": 0.16, "threshold": 2.0, "multiplier": 0.15}
+# INTEGER-GOVERNED periods (noise-floor validation C2): for these, a +1-integer change already flips
+# ≫5% of positions at EVERY base (threshold-crossing on the RSI period amplifies a 1-day shift), so the JND
+# is below one integer — a log ratio would merge genuinely-distinct integers. Each integer is its own cell.
+_INTEGER_PERIOD = {("rsi_reversion", "period"), ("multi_indicator", "rsi_period")}
+
+
+def _mode(template_id: str, param_name: str) -> str:
+    """How a dimension is binned: 'int' (integer-governed period, one cell per integer), 'log' (ratio-governed
+    period), or 'abs' (threshold/multiplier, absolute step)."""
+    if (template_id, param_name) in _INTEGER_PERIOD:
+        return "int"
+    return "log" if _kind(param_name) == "period" else "abs"
 
 
 def _kind(param_name: str) -> str:
@@ -81,32 +92,37 @@ def _res(template_id: str, param_name: str) -> float:
 
 def _dim_n(template_id: str, param_name: str, low: float, high: float) -> int:
     """Number of cells along one dimension."""
-    r = _res(template_id, param_name)
-    if _kind(param_name) == "period":
-        return int(math.floor(math.log(high / low) / math.log(1 + r))) + 1
-    return int(math.floor((high - low) / r)) + 1
+    mode = _mode(template_id, param_name)
+    if mode == "int":
+        return int(high - low) + 1                                   # one cell per integer
+    if mode == "log":
+        return int(math.floor(math.log(high / low) / math.log(1 + _res(template_id, param_name)))) + 1
+    return int(math.floor((high - low) / _res(template_id, param_name))) + 1
 
 
 def _dim_cell(template_id: str, param_name: str, low: float, high: float, v: float) -> int:
     """Cell index of value v along one dimension (v clamped into [low, high] first)."""
     v = min(max(v, low), high)
-    r = _res(template_id, param_name)
-    if _kind(param_name) == "period":
-        c = int(math.floor(math.log(v / low) / math.log(1 + r)))
+    mode = _mode(template_id, param_name)
+    if mode == "int":
+        c = int(round(v) - low)                                      # integer v → its own cell
+    elif mode == "log":
+        c = int(math.floor(math.log(v / low) / math.log(1 + _res(template_id, param_name))))
     else:
-        c = int(math.floor((v - low) / r))
+        c = int(math.floor((v - low) / _res(template_id, param_name)))
     return min(max(c, 0), _dim_n(template_id, param_name, low, high) - 1)
 
 
 def _dim_center(template_id: str, param_name: str, low: float, high: float, c: int, is_int: bool) -> float:
     """Representative value at the center of cell index c."""
-    r = _res(template_id, param_name)
-    n = _dim_n(template_id, param_name, low, high)
-    c = min(max(c, 0), n - 1)
-    if _kind(param_name) == "period":
-        val = low * (1 + r) ** (c + 0.5)
+    mode = _mode(template_id, param_name)
+    c = min(max(c, 0), _dim_n(template_id, param_name, low, high) - 1)
+    if mode == "int":
+        return int(low + c)                                          # the integer itself
+    if mode == "log":
+        val = low * (1 + _res(template_id, param_name)) ** (c + 0.5)
     else:
-        val = low + (c + 0.5) * r
+        val = low + (c + 0.5) * _res(template_id, param_name)
     val = min(val, high)
     return int(round(val)) if is_int else round(float(val), 2)
 

@@ -60,9 +60,23 @@ def test_at1_grid_collapses_near_duplicates_and_separates_meaningful_steps():
 
 @pytest.mark.finding("coverage-v1")
 def test_at1_massive_collapse_of_the_raw_space():
-    # The whole point: a huge raw space collapses to a small MEANINGFUL cell count.
-    assert 200 <= len(feasible_cells("rsi_reversion")) <= 4000   # was ~1.6e8 raw
+    # The whole point: a huge raw space collapses to a MEANINGFUL cell count (rsi period is integer-governed
+    # → 26 integers × 13 × 13 = 4394; still a >4-orders-of-magnitude collapse from the ~1.6e8 raw lattice).
+    assert 200 <= len(feasible_cells("rsi_reversion")) <= 6000
     assert 20 <= len(feasible_cells("sma_crossover")) <= 400
+
+
+# ── C2 (noise-floor validation): integer-governed oscillator periods get one cell per integer ──────
+@pytest.mark.finding("coverage-v1")
+def test_c2_integer_governed_rsi_period_is_one_cell_per_integer():
+    # A +1-integer RSI-period change flips >>5% of positions at EVERY base (measured), so the resolution is
+    # integer, not the log ratio — every integer must be its own cell (28 vs 29 must NOT merge).
+    cells = {bin_params("rsi_reversion", {"period": p, "buy_threshold": 30.0, "sell_threshold": 70.0})
+             for p in range(5, 31)}
+    assert len(cells) == 26                                    # 26 integers 5..30, none merged
+    assert cov._mode("rsi_reversion", "period") == "int"
+    assert cov._mode("multi_indicator", "rsi_period") == "int"
+    assert cov._mode("sma_crossover", "slow_period") == "log"  # ratio-governed periods are unchanged
 
 
 # ── AT-2: feasibility — the SMA dead corner is excluded and every kept cell is self-consistent ─────

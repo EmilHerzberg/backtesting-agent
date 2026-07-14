@@ -42,10 +42,10 @@ mean-reverting staples, index) over the fixed window **2015-01-01 … 2023-12-31
 3. **Log-spacing for periods is confirmed** — within a parameter the JND-*ratio* stays roughly constant across
    low/mid/high base values (e.g. sma slow: 0.12 / 0.16 / 0.16).
 4. **The true meaningful space is much larger than v1 assumed.** Feasible-cell counts per asset:
-   sma **130**, macd **196**, bollinger **364**, rsi **3,380**, multi_indicator **11,830** (was ~110 / … / ~324
-   under v1). This is itself important: there are far more meaningfully-distinct strategies than the coarse grid
-   implied — so "cover the whole space" is a large undertaking (coverage % stays low in normal use), and the v2
-   DSR correction gets a **larger, more honest** trial-count N.
+   sma **130**, macd **196**, bollinger **364**, rsi **4,394**, multi_indicator **13,013** (was ~110 / … / ~324
+   under v1; rsi/multi updated after the C2 integer-period correction below). This is itself important: there are
+   far more meaningfully-distinct strategies than the coarse grid implied — so "cover the whole space" is a large
+   undertaking (coverage % stays low in normal use), and the v2 DSR correction gets a **larger, more honest** N.
 5. **Integer resolution correctly caps the fine grids** — where the calibrated ratio implies more period cells
    than the integer range supports, cells with no distinct integer representative have no drawable center and
    are correctly dropped from `feasible_cells` (so the drawable count reflects genuinely-distinct strategies).
@@ -62,6 +62,28 @@ mean-reverting staples, index) over the fixed window **2015-01-01 … 2023-12-31
 tables + per-kind fallback; **`GRID_VERSION = "v2"`** (so any v1-persisted cells never collide). Reproducible
 source committed: `scripts/calibrate_coverage_grid.py` + raw per-asset disagreement curves in
 `calibration-v2-results.json`.
+
+## Noise-floor + warmup validation (C2 / C4) — 2026-07-14
+`scripts/validate_grid_noise.py`. Two contamination assumptions the calibration rested on, now checked:
+
+- **Determinism (C2a):** same (template, params, asset) run twice → position disagreement **= 0.0**. No hidden
+  randomness — the JND is a clean deterministic quantity.
+- **Warmup (C4):** re-measuring long-period steps with `max(period)` warmup bars discarded moves the
+  disagreement by **≤ 0.001** vs `warmup_bars=0`. **Non-issue** — the union-in-market normalisation already
+  excludes the (flat) warmup period. No re-measurement needed.
+- **Noise floor (C2b):** the smallest realizable step (±1 integer) disagreement vs T=0.05:
+  - **sma fast/slow, macd slow → ratio-governed** (floor 0.002–0.03 ≪ T) — the calibrated `r` with T=0.05 is
+    meaningful; T sits safely above the floor. ✅
+  - **RSI period → INTEGER-GOVERNED at *every* base** (a +1-integer change flips **11–23%** of positions —
+    threshold-crossing amplifies a 1-day RSI shift). The log ratio `r=0.08` was wrong: it merged
+    genuinely-distinct high-end integers (28 vs 29 are 16 % apart). **Correction applied:** one cell per integer
+    for `(rsi_reversion, period)` and `(multi_indicator, rsi_period)` (`coverage.py _INTEGER_PERIOD`). rsi
+    feasible 3,380 → **4,394**; multi 11,830 → **13,013**.
+  - **Bollinger period → mixed** (integer-governed at the low end, ratio at the high end); the log `r=0.06` +
+    integer-collapse approximates this adequately — left as is.
+  - **Thresholds ≈ 1 pt near the active RSI region** (base 30 → 0.053), ≫ away (base 20 → 0.002); the applied
+    step 2 is at the coarse end of defensible — documented, not changed. **std_dev** floor ≈ 0.1 near base 2.3;
+    applied 0.15 is fine.
 
 ## Quant/statistics review (2026-07-14) — this grid is for SIZING THE SAMPLER, not yet for the DSR N
 An adversarial quant review confirmed the grid **math** is correct and the metric choice is sound for its
