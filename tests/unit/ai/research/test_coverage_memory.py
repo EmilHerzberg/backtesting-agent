@@ -51,9 +51,9 @@ def test_at1_grid_collapses_near_duplicates_and_separates_meaningful_steps():
            bin_params("sma_crossover", {"fast_period": 43, "slow_period": 100})
     assert bin_params("sma_crossover", {"fast_period": 10, "slow_period": 100}) != \
            bin_params("sma_crossover", {"fast_period": 20, "slow_period": 100})
-    # thresholds: RSI 20 vs 22 = same cell; 20 vs 30 = different.
+    # thresholds (calibrated 2-pt bins): RSI 20 vs 20.5 = same cell; 20 vs 30 = different.
     assert bin_params("rsi_reversion", {"period": 14, "buy_threshold": 20.0, "sell_threshold": 70.0}) == \
-           bin_params("rsi_reversion", {"period": 14, "buy_threshold": 22.0, "sell_threshold": 70.0})
+           bin_params("rsi_reversion", {"period": 14, "buy_threshold": 20.5, "sell_threshold": 70.0})
     assert bin_params("rsi_reversion", {"period": 14, "buy_threshold": 20.0, "sell_threshold": 70.0}) != \
            bin_params("rsi_reversion", {"period": 14, "buy_threshold": 30.0, "sell_threshold": 70.0})
 
@@ -81,12 +81,17 @@ def test_at2_dead_corner_excluded_and_feasible_cells_are_self_mapping():
 
 
 @pytest.mark.finding("coverage-v1")
-def test_at2_non_constrained_templates_are_fully_feasible():
-    # macd/rsi/bollinger/multi have structural (disjoint-range) constraints → no repair → all cells feasible
-    for t in ("rsi_reversion", "bollinger_breakout", "macd_cross", "multi_indicator"):
-        ns = cov._dim_ns(t)
-        total = int(np.prod(ns))
-        assert len(feasible_cells(t)) == total, t
+def test_at2_feasible_cells_are_a_valid_drawable_subset():
+    # feasible ⊆ the per-dim product, non-empty, and every drawable cell SELF-MAPS (its center bins back to
+    # itself). Cells are dropped either by a constraint repair (sma) OR when the calibrated grid is finer than
+    # the integer resolution so a cell has no distinct integer representative — both correct exclusions.
+    for t in ("sma_crossover", "rsi_reversion", "bollinger_breakout", "macd_cross", "multi_indicator"):
+        feas = feasible_cells(t)
+        total = int(np.prod(cov._dim_ns(t)))
+        assert 0 < len(feas) <= total, (t, len(feas), total)
+        for cid in sorted(feas)[:300]:                        # sample keeps the big templates fast
+            c = cell_center(t, cid)
+            assert bin_params(t, _repair_params(t, dict(c))) == cid, (t, cid)
 
 
 # ── AT-7: OVERFITTING-NEUTRALITY (the quality gate) ────────────────────────────────────────────────
@@ -340,7 +345,7 @@ async def test_at8_run_surfaces_coverage_spread_telemetry(monkeypatch, frozen_oh
             agent_mode="rule_based", enable_oos=False, coverage_memory=True, user_id=1)
         ident = next(s for s in serialize_report(report)["sections"] if s["key"] == "strategy_identity")
         c = ident["numeric_fields"].get("coverage")
-        assert c and "novelty_rate" in c and c["cells_visited"] > 0 and c["grid_version"] == "v1"
+        assert c and "novelty_rate" in c and c["cells_visited"] > 0 and c["grid_version"] == "v2"
         # spread only: the per-template map holds COVERAGE FRACTIONS, and there is no performance ranking key
         assert all(0.0 <= v <= 1.0 for v in c["pct_covered_by_template"].values())
         assert not any(k in c for k in ("best_sharpe", "best_cell", "ranking", "top_cells"))

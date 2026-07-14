@@ -29,15 +29,35 @@ from collections import deque
 from dataclasses import dataclass, field
 from itertools import product
 
-# ── v1 grid constants (tagged so a v2 re-tuning never collides with v1 cells) ─────────────────────────
-GRID_VERSION = "v1"
-PERIOD_RATIO = 0.25      # period dims: log spacing, one cell per +25% (a lookback change < 25% ≈ noise)
-THRESHOLD_STEP = 5.0     # RSI-level dims: absolute 5-point cells
-MULTIPLIER_STEP = 0.5    # std_dev dim: absolute 0.5 cells
+# ── Calibrated grid (v2) — PER-PARAMETER resolution from the signal-flip study ────────────────────────
+# Each parameter's just-noticeable-difference (JND): the step at which ~5% of in-market days change position
+# (= a meaningfully different strategy), measured on the REAL backtest engine over 6 diverse assets
+# (AAPL/MSFT/NVDA/KO/PG/SPY, 2015-2023, target T=0.05). See docs/design/COVERAGE-CALIBRATION.md +
+# scratchpad/calibrate_grid.py. Sensitivity is very non-uniform, so resolution is per-parameter, not per-kind.
+# The GRID_VERSION bump means v1-persisted cells never collide with these v2 cells (namespaced in the store).
+GRID_VERSION = "v2"
+
+# PERIOD dims: log ratio r (one cell per multiplicative 1+r band). Short oscillators (rsi/bollinger period)
+# flip on a ~5-8% change; sma fast is nearly inert (~30%).
+_PERIOD_RATIO = {
+    ("sma_crossover", "fast_period"): 0.30, ("sma_crossover", "slow_period"): 0.16,
+    ("rsi_reversion", "period"): 0.08,
+    ("bollinger_breakout", "period"): 0.06,
+    ("macd_cross", "fast"): 0.20, ("macd_cross", "slow"): 0.22, ("macd_cross", "signal_period"): 0.20,
+    ("multi_indicator", "sma_period"): 0.16, ("multi_indicator", "rsi_period"): 0.08,  # analogs (multi under-trades)
+}
+# THRESHOLD dims: absolute RSI points. MULTIPLIER dims: absolute std-dev units.
+_THRESHOLD_STEP = {
+    ("rsi_reversion", "buy_threshold"): 2.0, ("rsi_reversion", "sell_threshold"): 2.0,
+    ("multi_indicator", "rsi_buy"): 2.0, ("multi_indicator", "rsi_sell"): 2.0,
+}
+_MULTIPLIER_STEP = {("bollinger_breakout", "std_dev"): 0.15}
+# Per-kind medians — fallback for any (template, param) pair not individually calibrated.
+_KIND_FALLBACK = {"period": 0.16, "threshold": 2.0, "multiplier": 0.15}
 
 
 def _kind(param_name: str) -> str:
-    """Classify a parameter by how "meaningfully different" scales for it (see the grid table in the doc)."""
+    """Classify a parameter by how "meaningfully different" scales for it."""
     if "std" in param_name:
         return "multiplier"
     if param_name.endswith("threshold") or param_name in ("rsi_buy", "rsi_sell"):
@@ -51,35 +71,42 @@ def _template_space(template_id: str) -> dict:
     return TEMPLATES[template_id]
 
 
-def _step(kind: str) -> float:
-    return THRESHOLD_STEP if kind == "threshold" else MULTIPLIER_STEP
+def _res(template_id: str, param_name: str) -> float:
+    """Calibrated resolution for one parameter: a log RATIO (period) or an absolute STEP (threshold/
+    multiplier). Falls back to the per-kind median when the pair was not individually calibrated."""
+    kind = _kind(param_name)
+    tbl = {"period": _PERIOD_RATIO, "threshold": _THRESHOLD_STEP, "multiplier": _MULTIPLIER_STEP}[kind]
+    return tbl.get((template_id, param_name), _KIND_FALLBACK[kind])
 
 
-def _dim_n(kind: str, low: float, high: float) -> int:
+def _dim_n(template_id: str, param_name: str, low: float, high: float) -> int:
     """Number of cells along one dimension."""
-    if kind == "period":
-        return int(math.floor(math.log(high / low) / math.log(1 + PERIOD_RATIO))) + 1
-    return int(math.floor((high - low) / _step(kind))) + 1
+    r = _res(template_id, param_name)
+    if _kind(param_name) == "period":
+        return int(math.floor(math.log(high / low) / math.log(1 + r))) + 1
+    return int(math.floor((high - low) / r)) + 1
 
 
-def _dim_cell(kind: str, low: float, high: float, v: float) -> int:
+def _dim_cell(template_id: str, param_name: str, low: float, high: float, v: float) -> int:
     """Cell index of value v along one dimension (v clamped into [low, high] first)."""
     v = min(max(v, low), high)
-    if kind == "period":
-        c = int(math.floor(math.log(v / low) / math.log(1 + PERIOD_RATIO)))
+    r = _res(template_id, param_name)
+    if _kind(param_name) == "period":
+        c = int(math.floor(math.log(v / low) / math.log(1 + r)))
     else:
-        c = int(math.floor((v - low) / _step(kind)))
-    return min(max(c, 0), _dim_n(kind, low, high) - 1)
+        c = int(math.floor((v - low) / r))
+    return min(max(c, 0), _dim_n(template_id, param_name, low, high) - 1)
 
 
-def _dim_center(kind: str, low: float, high: float, c: int, is_int: bool) -> float:
+def _dim_center(template_id: str, param_name: str, low: float, high: float, c: int, is_int: bool) -> float:
     """Representative value at the center of cell index c."""
-    n = _dim_n(kind, low, high)
+    r = _res(template_id, param_name)
+    n = _dim_n(template_id, param_name, low, high)
     c = min(max(c, 0), n - 1)
-    if kind == "period":
-        val = low * (1 + PERIOD_RATIO) ** (c + 0.5)
+    if _kind(param_name) == "period":
+        val = low * (1 + r) ** (c + 0.5)
     else:
-        val = low + (c + 0.5) * _step(kind)
+        val = low + (c + 0.5) * r
     val = min(val, high)
     return int(round(val)) if is_int else round(float(val), 2)
 
@@ -100,7 +127,7 @@ def bin_params(template_id: str, params: dict) -> str:
         v = params.get(name)
         if v is None:
             v = (lo + hi) / 2
-        idxs.append(str(_dim_cell(_kind(name), lo, hi, float(v))))
+        idxs.append(str(_dim_cell(template_id, name, lo, hi, float(v))))
     return f"{GRID_VERSION}:" + "-".join(idxs)
 
 
@@ -113,7 +140,7 @@ def cell_center(template_id: str, cell_id: str) -> dict:
         spec = space[name]
         lo, hi = float(spec["low"]), float(spec["high"])
         is_int = spec.get("type") == "int"
-        out[name] = _dim_center(_kind(name), lo, hi, c, is_int)
+        out[name] = _dim_center(template_id, name, lo, hi, c, is_int)
     return out
 
 
@@ -129,7 +156,7 @@ def _dim_ns(template_id: str) -> list[int]:
     ns = []
     for name in _sorted_params(template_id):
         spec = space[name]
-        ns.append(_dim_n(_kind(name), float(spec["low"]), float(spec["high"])))
+        ns.append(_dim_n(template_id, name, float(spec["low"]), float(spec["high"])))
     return ns
 
 

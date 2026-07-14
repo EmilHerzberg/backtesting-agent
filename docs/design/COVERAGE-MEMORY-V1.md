@@ -10,18 +10,21 @@ prior run has dug — without touching how significance is judged.
 - **No automatic stop** on "space covered" (v1 only *reports* progress).
 - **No coupling of the coverage count into the significance math** (deflated-Sharpe `n_trials_global` stays
   per-run, exactly as today). v1 is deliberately **overfitting-neutral**.
-- **No signal-flip calibration** of the grid resolution — v1 ships a-priori constants tagged `grid_version="v1"`.
+- ~~No signal-flip calibration~~ **DONE (2026-07-14): the grid is now calibrated (`grid_version="v2"`) — see
+  `COVERAGE-CALIBRATION.md`.** The a-priori v1 constants below are kept for context; the applied resolutions are
+  per-parameter and measured.
 - **No regime-mode coverage** — each regime window is its own space; v1 persists coverage for **robustness mode only**.
 
-## The grid — "intervals that make sense" (per parameter KIND)
+## The grid — "intervals that make sense" (per parameter)
 A continuous/integer parameter point is mapped to a discrete **cell**; two points in the same cell are the
-"same strategy". Resolution is per-KIND because *meaningfully different* differs by kind:
+"same strategy". Resolution is **per-parameter** (calibration found sensitivity is very non-uniform), keyed by
+kind. **v2 (applied) resolutions are measured — see `COVERAGE-CALIBRATION.md`**; the a-priori v1 guesses:
 
-| Kind | Params | Scale | v1 step | Rationale |
+| Kind | Params | Scale | a-priori v1 step (superseded) | Rationale |
 |---|---|---|---|---|
-| period | all lookback windows (SMA/RSI/Bollinger/MACD periods) | **log / relative** | ratio **r = 0.25** (25%) | 42→43 (+2%) is noise; 5→6 (+20%) shifts the signal. A "day" is meaningless; a *percent* is not. |
-| threshold | RSI buy/sell levels | **absolute** | **5 points** | RSI 30 vs 31 = noise; 30 vs 35 = different entries. |
-| multiplier | Bollinger `std_dev` | **absolute** | **0.5** | effect on breakout frequency ≈ linear in the multiplier. |
+| period | all lookback windows (SMA/RSI/Bollinger/MACD periods) | **log / relative** | ratio r = 0.25 → **calibrated 0.06–0.30/param** | 42→43 (+2%) is noise; 5→6 (+20%) shifts the signal. A "day" is meaningless; a *percent* is not. |
+| threshold | RSI buy/sell levels | **absolute** | 5 points → **calibrated 2** | RSI 30 vs 31 = noise; 30 vs ~33 = different entries. |
+| multiplier | Bollinger `std_dev` | **absolute** | 0.5 → **calibrated 0.15** | effect on breakout frequency ≈ linear in the multiplier. |
 
 Per-dim cell index (`v` clamped to `[low, high]` first):
 - **period:** `c = floor( ln(v/low) / ln(1+r) )`, capped at `N-1`; `N = floor( ln(high/low)/ln(1+r) ) + 1`
