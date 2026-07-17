@@ -1000,8 +1000,10 @@ def main():
             redo.setdefault(t, set()).add(p)
         if not redo:
             break
-        failed += run_phase_a(panel, args.workers, shard_dir, windows,
-                              {t: sorted(ps) for t, ps in redo.items()},
+        # Recompute FULL shards (all dials) with the extended rung set — a
+        # partial-dials pass would overwrite shards with partial records and
+        # destroy every other dial's measurements (caught live 2026-07-17).
+        failed += run_phase_a(panel, args.workers, shard_dir, windows, dials,
                               extra_rungs)
         results = run_phase_b(panel, shard_dir)
     results["extend_finer_rounds"] = rounds
