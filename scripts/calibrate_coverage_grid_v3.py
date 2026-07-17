@@ -123,8 +123,9 @@ PARAMS = {
 RATIOS = [0.05, 0.08, 0.12, 0.16, 0.20, 0.25, 0.30, 0.40, 0.50]
 ABS_STEPS = {"threshold": [1.0, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0],
              "multiplier": [0.1, 0.2, 0.3, 0.5, 0.75, 1.0]}
-EXTEND_FINER = {"period": [0.02, 0.03], "threshold": [0.5],
-                "multiplier": [0.05]}
+EXTEND_FINER = {"period": [0.02, 0.03], "threshold": [0.25, 0.5],
+                "multiplier": [0.025, 0.05]}  # AM-9: owner chose to extend
+                # past the first-round floors (0.5 pts / 0.05) before freezing
 PLUS_ONE_INT = "+1int"
 
 SKIP_REASONS = {"no_bars_in_window", "overlap_lt_50", "active_lt_nmin",
