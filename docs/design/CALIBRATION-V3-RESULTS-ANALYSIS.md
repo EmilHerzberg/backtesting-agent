@@ -1,8 +1,33 @@
 # Calibration V3 — Results Analysis (2026-07-17)
 
-**Artifact:** `calibration-v3-results.json` (sha256 `d37c802f2b9e35fd…`, write-once).
-**Run:** 211-name frozen panel × 8 windows, 8 workers, pregates PASS, 2 extend-finer
-rounds, zero crashes / zero excluded names / zero crash-rate violations.
+**Final artifact (post-AM-9):** `calibration-v3-results.json` (sha256
+`68f6bbe9d38d8aab…`, write-once). First-run artifact superseded and retained as
+`calibration-v3-results-superseded-preAM9.json` (sha `d37c802f…`).
+**Runs:** 211-name frozen panel × 8 windows, 8 workers, pregates PASS, zero
+crashes / zero excluded names / zero crash-rate violations in both runs.
+
+## FINAL FROZEN GRID (AM-10) — the numbers that transcribe into coverage.py v3
+
+| dial | frozen step | basis |
+|---|---|---|
+| sma_crossover.fast_period | ratio **0.0357** | measured interior, CI-separated |
+| sma_crossover.slow_period | ratio **0.02** | integer quantum at governing base 30 (FIX-31 mixed) |
+| rsi_reversion.period | **one cell per integer** | integer-governed, all bases |
+| rsi_reversion.buy_threshold | **0.25 pts** | SCALE_FREE_TAIL (AM-10) |
+| rsi_reversion.sell_threshold | **0.3996 pts** | measured interior (AM-9 found it below 0.5) |
+| bollinger_breakout.period | **one cell per integer** | integer-governed, all bases (NEW vs v2) |
+| bollinger_breakout.std_dev | **0.025** | SCALE_FREE_TAIL (AM-10) |
+| macd_cross.fast | ratio **0.0896** | measured interior, CI-separated |
+| macd_cross.signal_period | ratio **0.1089** | measured interior |
+| macd_cross.slow | ratio **0.1518** | measured interior |
+
+**AM-9 verdict on the extension question:** sell_threshold had a real floor
+(0.3996 — the first-run 0.5 was ~25% too coarse; the extension paid for
+itself). buy_threshold and std_dev are **scale-free** — the whole Q-ladder
+(Q0.75–Q0.95) sits at every floor we sweep, so further extension is a
+measurably endless regress; frozen at the finest still-crossing rung per
+AM-10 with residual sub-cell distinctness absorbed by the measured-ρ̄
+effective-N reduction.
 
 ## Headline per-dial JNDs (T=0.05, Q=0.85, CI-separated-min over bases × regimes)
 
@@ -58,18 +83,13 @@ DSR bar = the safe direction), with the measured ρ̄ feeding the effective-N
 reduction so the bar stays honest rather than vacuous (sr0 ∝ √(2·ln N) —
 weak lever, FIX-30 curve committed in the results).
 
-## Open freeze decision (owner) before transcription
+## Freeze decision — RESOLVED (owner chose extension; AM-9 + AM-10)
 
-The floored NON-integer dials (buy/sell thresholds at 0.5, std_dev at 0.05)
-violate FIX-19's letter ("a bottomed-out sweep can never be accepted as
-fine-enough"). Options:
-- **(A, recommended)** Freeze 0.5 pts / 0.05 as the grid steps — they equal the
-  practical proposal quantum of the strategist, the residual within-cell
-  correlation is exactly what the measured-ρ̄ effective-N absorbs, and the
-  alternative only moves sr0 by a few percent. Record as amendment AM-9.
-- **(B)** One more extension round beyond the §12 prepends (0.25 pts / 0.025
-  mult, ~15 min compute) to locate the true floor first; also an amendment
-  (the §12 EXTEND_FINER sets are exhausted).
+The owner chose option B (extend finer before freezing). Outcome: sell_threshold
+found its true interior floor (0.3996); buy_threshold and std_dev proved
+SCALE-FREE (whole Q-ladder at every swept floor) and are frozen at the finest
+measured rung (0.25 / 0.025) per AM-10. The first-run section below is retained
+for provenance; the FINAL FROZEN GRID table above supersedes it.
 
-Deferred stage (recorded in the artifact): FIX-11 K-seed JND spread across the
-alternate panels — run before transcription finalizes.
+Remaining before transcription: FIX-11 K-seed JND spread across the alternate
+panels (recorded as the deferred stage in the artifact).
