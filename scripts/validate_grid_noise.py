@@ -74,10 +74,13 @@ def disag(p1, p2):
 
 
 def med_step(template, others, pname, base, step, warmup=0):
+    # FIX-33 (V3 protocol): grade the integer/ratio confirmation with the same
+    # conservative Q=0.85 statistic as the main pipeline, not the lenient
+    # median it is meant to replace. (Name kept for call-site stability.)
     v = [disag(positions(template, {**others, pname: base}, s, warmup),
               positions(template, {**others, pname: round(base + step, 2)}, s, warmup)) for s in _data]
     v = [x for x in v if x is not None]
-    return round(float(np.median(v)), 3) if v else None
+    return round(float(np.percentile(v, 85)), 3) if v else None
 
 
 def main():
