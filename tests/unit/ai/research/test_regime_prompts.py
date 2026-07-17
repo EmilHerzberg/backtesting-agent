@@ -79,7 +79,9 @@ def test_build_pipeline_regime_softens_quality_gates():
     p = build_default_pipeline(RIGOR_PRESETS["standard"], mode="regime")
     sev = {type(g).__name__: g.severity for g in p.gates}
     assert sev["PerformanceFloorGate"] == GateSeverity.SOFT
-    assert sev["DeflatedSharpeGate"] == GateSeverity.SOFT
+    # Safety pass (reconciled plan §2c): DSR is an INTEGRITY gate and regime mode runs with the
+    # robustness OOS off — softening it was a pure loosening. It stays HARD until FB4 ships.
+    assert sev["DeflatedSharpeGate"] == GateSeverity.HARD
     assert sev["CostStressGate"] == GateSeverity.SOFT
     assert sev["BenchmarkRelativeGate"] == GateSeverity.HARD   # the anti-garbage floor stays HARD
     assert sev["MinimumActivityGate"] == GateSeverity.HARD

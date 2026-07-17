@@ -80,7 +80,11 @@ def build_default_pipeline(rigor: dict[str, float] | None = None, mode: str = "r
         # Idea-surfacing: the QUALITY gates go SOFT (a FAIL is recorded as a weakness, non-fatal, no
         # short-circuit — the pipeline already treats SOFT fails this way). Integrity gates + the activity
         # floor + benchmark_relative (the anti-garbage / not-dominated floor) stay HARD.
-        for _g in (perf, cost, dsr, lag):
+        # DSR stays HARD too (safety pass 2026-07-16, reconciled plan §2c): multiplicity control is an
+        # integrity gate, and regime mode runs with the robustness OOS disabled — softening DSR while the
+        # OOS backstop is off was a pure loosening. Soft-DSR anywhere is sequencing-blocked until FB4
+        # (campaign-wide OOS multiplicity control) ships.
+        for _g in (perf, cost, lag):
             _g.severity = GateSeverity.SOFT
     return GatePipeline([
         SpecValidationGate(),

@@ -74,12 +74,64 @@ def test_insignificant_sample_fails_even_when_positive():
 
 
 @pytest.mark.finding("H3")
-def test_significant_but_under_buy_hold_fails():
-    # Strong, significant per-trade edge (t high, positive Sharpe → the tier VALIDATES) but the
-    # strategy trails a flat long → no real value added. The excess-over-buy-hold arm fails it.
+def test_significant_but_risk_adjusted_under_buy_hold_fails():
+    # D2: strong, significant per-trade edge (the tier VALIDATES) but the strategy's Sharpe trails
+    # buy-and-hold's → no RISK-ADJUSTED value added over the passive alternative → FAIL.
     m = {"n_trades": 30, "trade_returns": _significant_returns(30),
-         "total_return": 0.10, "buy_hold_return": 0.30, "sharpe_annual": 1.2}
+         "total_return": 0.10, "buy_hold_return": 0.30,
+         "sharpe_annual": 1.2, "buy_hold_sharpe": 2.0}
     assert _oos_verdict(m)[0] is OOSOutcome.FAIL
+
+
+@pytest.mark.finding("D2")
+def test_market_neutral_skill_passes_despite_lower_total_return():
+    # D2 / OD7: the old bar folded TOTAL-return-vs-buy-and-hold into the PASS — a beta bar that
+    # silently failed genuine market-neutral skill in bull markets. Risk-adjusted: a significant
+    # edge with a HIGHER Sharpe than buy-and-hold passes even when its total return is lower.
+    m = {"n_trades": 30, "trade_returns": _significant_returns(30),
+         "total_return": 0.10, "buy_hold_return": 0.30,
+         "sharpe_annual": 1.5, "buy_hold_sharpe": 0.6}
+    outcome, _a, extras = _oos_verdict(m)
+    assert outcome is OOSOutcome.PASS
+    assert extras["excess_sharpe"] > 0
+    assert extras["excess_total_return_net"] < 0        # reported honestly, not gating
+    assert extras["total_return_floor"] is False
+
+
+@pytest.mark.finding("D2")
+def test_total_return_floor_toggle_gates_when_enabled(monkeypatch):
+    # The SEPARATE product floor (off by default): with the toggle on, the same market-neutral
+    # edge must ALSO beat a fee-paying buy-and-hold on total return — and here it doesn't.
+    import src.backend.ai.research.loop as loop_mod
+    monkeypatch.setattr(loop_mod, "OOS_TOTAL_RETURN_FLOOR", True)
+    m = {"n_trades": 30, "trade_returns": _significant_returns(30),
+         "total_return": 0.10, "buy_hold_return": 0.30,
+         "sharpe_annual": 1.5, "buy_hold_sharpe": 0.6}
+    outcome, _a, extras = _oos_verdict(m)
+    assert outcome is OOSOutcome.FAIL and extras["total_return_floor"] is True
+
+
+@pytest.mark.finding("D2")
+def test_buy_hold_comparison_charges_the_benchmark_its_fees():
+    # The user-facing reality check: the buy-and-hold alternative also pays entry+exit commission.
+    # Strategy net 0.099 vs B&H gross 0.10: fee-free comparison loses; fee-net comparison wins
+    # (0.10 gross → (1.10)(1-0.01)^2-1 ≈ 0.0781 net at 1% commission).
+    m = {"n_trades": 30, "trade_returns": _significant_returns(30),
+         "total_return": 0.099, "buy_hold_return": 0.10, "commission": 0.01,
+         "sharpe_annual": 1.5, "buy_hold_sharpe": 0.6}
+    _outcome, _a, extras = _oos_verdict(m)
+    assert extras["excess_total_return_net"] > 0
+
+
+@pytest.mark.finding("D2")
+def test_missing_benchmark_is_unevaluated_not_a_degraded_pass():
+    # M46 (review fix): benchmark_available=False means "no benchmark computable", not "benchmark
+    # with Sharpe 0" — the excess-skill question is unanswerable → honest UNEVALUATED, retryable.
+    m = {"n_trades": 30, "trade_returns": _significant_returns(30),
+         "total_return": 0.50, "buy_hold_return": 0.0, "buy_hold_sharpe": 0.0,
+         "sharpe_annual": 1.5, "benchmark_available": False}
+    outcome, _a, extras = _oos_verdict(m)
+    assert outcome is OOSOutcome.UNEVALUATED and extras.get("benchmark_unavailable") is True
 
 
 def test_pass_bar_uses_the_validation_t_star():

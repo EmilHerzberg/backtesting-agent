@@ -731,6 +731,11 @@ async def get_run_candidates(
                 "in_market_sharpe": _oos_res.in_market_sharpe,
                 "in_market_ci_low": _oos_res.in_market_ci_low,
                 "in_market_ci_high": _oos_res.in_market_ci_high,
+                # D2: the buy-and-hold comparison — excess Sharpe (gates the PASS) and the fee-net
+                # excess total return (the "would simply holding have made more?" reality check).
+                "excess_sharpe": getattr(_oos_res, "excess_sharpe", None),
+                "excess_total_return_net": getattr(_oos_res, "excess_total_return_net", None),
+                "total_return_floor": getattr(_oos_res, "total_return_floor", False),
             } if _oos_res is not None and _oos_res.confidence_tier else {}
             _vs = getattr(c, "validation_status", "")
             _wk = getattr(c, "weaknesses", []) or []

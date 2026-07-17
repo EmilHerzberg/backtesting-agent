@@ -269,6 +269,9 @@ VALIDATE_T = 1.65            # P2-R4: ~95% one-sided; stricter than quick/medium
 DECAY_SHARPE_FLOOR = 0.10    # M29: below this an in-regime Sharpe is too small for an honest retained-ratio
 # NOTE: the legacy fixed-20 bar (VALIDATE_MIN_TRADES / OOS_MIN_TRADES) is gone — the trade bar is now the
 # frequency-scaled `scaled_min_trades` (ceil `confidence.VALIDATE_CEIL`=20, floors REGIME_FLOOR/OOS_FLOOR).
+# D2 (locked owner decision): "validated" = risk-adjusted skill. The total-return-vs-fee-paying-buy-and-hold
+# comparison is computed + reported ALWAYS; it gates the OOS PASS only when this explicit toggle is on.
+OOS_TOTAL_RETURN_FLOOR = False
 
 
 def _days(a: str, b: str) -> int:
@@ -531,18 +534,20 @@ class _PromotionToken:
 
 def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
                  oos_days: float = 0, seed: int = 0) -> tuple[Any, Any]:
-    """D5 / H3 + valconf/R5 — the OOS pass bar, now frequency-aware and graded.
+    """D5 / H3 + valconf/R5 + D2 — the OOS pass bar: frequency-aware, graded, RISK-ADJUSTED.
 
-    Returns ``(OOSOutcome, ConfidenceAssessment)``: the outcome is the control verdict the lockbox/budget/goal
-    logic consumes (unchanged contract); the assessment rides alongside so its tier + CI can be SURFACED for
-    display (spec §5.6 — the same evidence the regime hold-out attaches), instead of being computed and dropped.
+    Returns ``(OOSOutcome, ConfidenceAssessment, extras)``: the outcome is the control verdict the lockbox/
+    budget/goal logic consumes; the assessment rides alongside so its tier + CI can be SURFACED for display
+    (spec §5.6); ``extras`` carries the D2 benchmark comparison (excess Sharpe + fee-net excess total return)
+    for the OOSResult/report — display evidence, never steering anything but the verdict rule below.
 
-    The old bar demanded a FIXED 20 trades; here the trade bar SCALES to the strategy's IS tempo × the OOS
-    window length (floor ``OOS_FLOOR``), so a slow strategy over the long OOS window isn't auto-UNEVALUATED.
-    The OOS PASS/FAIL/UNEVALUATED CONTRACT is preserved:
-      * PASS ⇐ a real per-trade significance test clears the (df-aware) bar AND the edge is positive OVER
-        BUY-AND-HOLD (D5 — beating a flat long, not just positive).
-      * FAIL ⇐ a real per-trade test ran but was not significant / did not beat buy-and-hold (TERMINAL).
+    The trade bar SCALES to the strategy's IS tempo × the OOS window length (floor ``OOS_FLOOR``), so a slow
+    strategy over the long OOS window isn't auto-UNEVALUATED. The PASS/FAIL/UNEVALUATED contract:
+      * PASS ⇐ a real per-trade significance test clears the (df-aware) bar AND the RISK-ADJUSTED edge beats
+        buy-and-hold (excess Sharpe > 0 — D2; the old total-return arm was a beta bar, see OD7). With
+        ``OOS_TOTAL_RETURN_FLOOR`` on, the fee-net total-return floor applies additionally (explicit product
+        policy, off by default → report-only).
+      * FAIL ⇐ a real per-trade test ran and the bar above was not met (TERMINAL).
       * UNEVALUATED ⇐ too thin for a per-trade test ('we don't know' — never a FAIL, model-honesty). A
         per-bar block-bootstrap CI is still computed as evidence, but per-bar NEVER produces a PASS (R6).
     """
@@ -558,14 +563,38 @@ def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
         in_market_returns=m.get("returns_in_market"),   # valconf: edge-when-deployed Sharpe + CI
     )
     if a.basis != "per_trade":                   # too thin for a real significance test → not a failure
-        return OOSOutcome.UNEVALUATED, a
-    excess = float(m.get("total_return", 0.0)) - float(m.get("buy_hold_return", 0.0))
-    outcome = OOSOutcome.PASS if (a.validates and excess > 0.0) else OOSOutcome.FAIL
-    return outcome, a
+        return OOSOutcome.UNEVALUATED, a, {}
+    if not bool(m.get("benchmark_available", True)):
+        # M46 (review fix): an uncomputable benchmark must not masquerade as "benchmark with
+        # Sharpe 0" — without a real buy-and-hold comparison the D2 excess-skill question is
+        # unanswerable → honest absence (retryable), never a silently-degraded absolute-Sharpe PASS.
+        return OOSOutcome.UNEVALUATED, a, {"benchmark_unavailable": True}
+    # D2 (locked owner decision, reconciled plan §1): the PASS certifies RISK-ADJUSTED skill —
+    # excess Sharpe over buy-and-hold — matching every upstream gate (DSR/ValConf). The old
+    # total-return-vs-buy-and-hold arm was a beta bar in a skill bar's costume (OD7): it silently
+    # failed genuine market-neutral / low-beta edges in bull markets. Known residual (conscious
+    # choice, within D2's letter): a plain Sharpe DIFFERENCE is not beta-neutral — in a very
+    # high-Sharpe bull window it can still fail true market-neutral skill; a regression alpha/IR
+    # upgrade is a candidate for the FB4 phase, recorded in the Track-1 review.
+    excess_sharpe = float(m.get("sharpe_annual", 0.0)) - float(m.get("buy_hold_sharpe") or 0.0)
+    passed = bool(a.validates) and excess_sharpe > 0.0
+    # D2's separate, explicitly-labelled total-return comparison: strategy net return vs a buy-and-
+    # hold that ALSO pays its entry+exit commission (a real alternative costs money too). Report-only
+    # by default; a hard product floor only via the explicit OOS_TOTAL_RETURN_FLOOR toggle.
+    c = float(m.get("commission", 0.0) or 0.0)
+    bh_net = (1.0 + float(m.get("buy_hold_return", 0.0))) * (1.0 - c) ** 2 - 1.0
+    excess_total_net = float(m.get("total_return", 0.0)) - bh_net
+    if OOS_TOTAL_RETURN_FLOOR:
+        passed = passed and excess_total_net > 0.0
+    extras = {"excess_sharpe": round(excess_sharpe, 6),
+              "excess_total_return_net": round(excess_total_net, 6),
+              "total_return_floor": bool(OOS_TOTAL_RETURN_FLOOR)}
+    return (OOSOutcome.PASS if passed else OOSOutcome.FAIL), a, extras
 
 
 def _record_oos(state: ResearchState, candidate: Candidate, outcome_value: str,
-                lineage_id: str, emit: Any, assessment: Any = None) -> None:
+                lineage_id: str, emit: Any, assessment: Any = None,
+                extras: dict | None = None) -> None:
     """Append the OOS verdict to state (last-wins per hash for the trust badge) and emit it.
 
     ``assessment`` (a ConfidenceAssessment) is the OOS evidence from this evaluation; its tier + CI ride
@@ -586,6 +615,9 @@ def _record_oos(state: ResearchState, candidate: Candidate, outcome_value: str,
         in_market_sharpe=getattr(a, "in_market_sharpe", None),
         in_market_ci_low=getattr(a, "in_market_ci_low", None),
         in_market_ci_high=getattr(a, "in_market_ci_high", None),
+        excess_sharpe=(extras or {}).get("excess_sharpe"),
+        excess_total_return_net=(extras or {}).get("excess_total_return_net"),
+        total_return_floor=bool((extras or {}).get("total_return_floor", False)),
     )
     state.oos_results.append(result)
     emit("oos_result", {
@@ -594,6 +626,11 @@ def _record_oos(state: ResearchState, candidate: Candidate, outcome_value: str,
         "ci_low": result.ci_low, "ci_high": result.ci_high, "ci_level": result.ci_level,
         "in_market_sharpe": result.in_market_sharpe,
         "in_market_ci_low": result.in_market_ci_low, "in_market_ci_high": result.in_market_ci_high,
+        # D2: the benchmark comparison — risk-adjusted (gates the PASS) + fee-net total-return (report-only
+        # unless the explicit floor toggle is on).
+        "excess_sharpe": result.excess_sharpe,
+        "excess_total_return_net": result.excess_total_return_net,
+        "total_return_floor": result.total_return_floor,
     })
 
 
@@ -655,7 +692,7 @@ def _run_oos_lockbox(
         oos_metrics = executor.run(oos_spec, oos_data, warmup_bars=oos_wb)
         # valconf/R5: scale the OOS trade bar to the IS selection tempo (candidate's IS trades over the IS
         # window span) × the OOS window length, so a slow strategy isn't auto-UNEVALUATED by a fixed bar.
-        outcome, assessment = _oos_verdict(
+        outcome, assessment, extras = _oos_verdict(
             oos_metrics,
             train_trades=int(getattr(candidate, "n_trades", 0) or 0),
             train_days=_days(getattr(state, "window_start", "") or "",
@@ -665,10 +702,12 @@ def _run_oos_lockbox(
             seed=_seed_from_hash(getattr(candidate, "strategy_hash", "") or ""),
         )
         captured["assessment"] = assessment
+        captured["extras"] = extras
         return outcome
 
     outcome = lockbox.evaluate(token, run_oos_backtest=_oos_backtest)
-    _record_oos(state, candidate, outcome.value, budget_lineage, emit, captured.get("assessment"))
+    _record_oos(state, candidate, outcome.value, budget_lineage, emit,
+                captured.get("assessment"), captured.get("extras"))
 
     if outcome is OOSOutcome.FAIL:
         logger.info("OOS FAIL for %s — terminal.", candidate.strategy_hash[:16])

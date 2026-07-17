@@ -158,6 +158,12 @@ class OOSResult:
     in_market_sharpe: float | None = None
     in_market_ci_low: float | None = None
     in_market_ci_high: float | None = None
+    # D2 benchmark comparison: excess Sharpe over buy-and-hold (the risk-adjusted quantity the PASS keys on)
+    # and the fee-net excess TOTAL return vs a commission-paying buy-and-hold (report-only unless the
+    # explicit OOS_TOTAL_RETURN_FLOOR product toggle is on — recorded here so the verdict is auditable).
+    excess_sharpe: float | None = None
+    excess_total_return_net: float | None = None
+    total_return_floor: bool = False
 
 
 @dataclass
