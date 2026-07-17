@@ -46,24 +46,25 @@ def _spread(template_id, cell_ids):
 # ── AT-1: the grid collapses near-duplicates, separates meaningful steps ───────────────────────────
 @pytest.mark.finding("coverage-v1")
 def test_at1_grid_collapses_near_duplicates_and_separates_meaningful_steps():
-    # periods: a +2% change (42→43) is the SAME cell; a +100% change (10→20) is a DIFFERENT cell.
-    assert bin_params("sma_crossover", {"fast_period": 42, "slow_period": 100}) == \
-           bin_params("sma_crossover", {"fast_period": 43, "slow_period": 100})
-    assert bin_params("sma_crossover", {"fast_period": 10, "slow_period": 100}) != \
-           bin_params("sma_crossover", {"fast_period": 20, "slow_period": 100})
-    # thresholds (calibrated 2-pt bins): RSI 20 vs 20.5 = same cell; 20 vs 30 = different.
+    # periods (v3: slow ratio 0.02): a +0.5% change (100→100.5) is the SAME cell; +10% is DIFFERENT.
+    assert bin_params("sma_crossover", {"fast_period": 15, "slow_period": 100}) == \
+           bin_params("sma_crossover", {"fast_period": 15, "slow_period": 100.5})
+    assert bin_params("sma_crossover", {"fast_period": 15, "slow_period": 100}) != \
+           bin_params("sma_crossover", {"fast_period": 15, "slow_period": 110})
+    # thresholds (v3 calibrated 0.25-pt bins, scale-free tail): 20 vs 20.1 = same cell; 20 vs 20.5 = different.
     assert bin_params("rsi_reversion", {"period": 14, "buy_threshold": 20.0, "sell_threshold": 70.0}) == \
-           bin_params("rsi_reversion", {"period": 14, "buy_threshold": 20.5, "sell_threshold": 70.0})
+           bin_params("rsi_reversion", {"period": 14, "buy_threshold": 20.1, "sell_threshold": 70.0})
     assert bin_params("rsi_reversion", {"period": 14, "buy_threshold": 20.0, "sell_threshold": 70.0}) != \
-           bin_params("rsi_reversion", {"period": 14, "buy_threshold": 30.0, "sell_threshold": 70.0})
+           bin_params("rsi_reversion", {"period": 14, "buy_threshold": 20.5, "sell_threshold": 70.0})
 
 
 @pytest.mark.finding("coverage-v1")
 def test_at1_massive_collapse_of_the_raw_space():
-    # The whole point: a huge raw space collapses to a MEANINGFUL cell count (rsi period is integer-governed
-    # → 26 integers × 13 × 13 = 4394; still a >4-orders-of-magnitude collapse from the ~1.6e8 raw lattice).
-    assert 200 <= len(feasible_cells("rsi_reversion")) <= 6000
-    assert 20 <= len(feasible_cells("sma_crossover")) <= 400
+    # The whole point: a huge raw space collapses to a MEANINGFUL cell count. Under the v3 warehouse-measured
+    # grid (26 integer periods × 100 × 63 threshold bins ≈ 165k) the collapse from the ~1.6e8 raw lattice is
+    # still ~3 orders of magnitude — the space is honestly LARGE because rsi thresholds measured scale-free.
+    assert 100_000 <= len(feasible_cells("rsi_reversion")) <= 200_000
+    assert 2_000 <= len(feasible_cells("sma_crossover")) <= 5_000
 
 
 # ── C2 (noise-floor validation): integer-governed oscillator periods get one cell per integer ──────
@@ -170,7 +171,7 @@ def test_f1_reachable_is_canonical_superset_of_feasible():
     from src.backend.ai.research.coverage import reachable_cells
     for t in ("sma_crossover", "rsi_reversion", "bollinger_breakout", "macd_cross", "multi_indicator"):
         assert feasible_cells(t) <= reachable_cells(t)
-    assert len(reachable_cells("sma_crossover")) == 132 and len(feasible_cells("sma_crossover")) == 130
+    assert len(reachable_cells("sma_crossover")) == 3572 and len(feasible_cells("sma_crossover")) == 3569
     for t in ("rsi_reversion", "bollinger_breakout", "macd_cross", "multi_indicator"):
         assert reachable_cells(t) == feasible_cells(t)
 
@@ -393,7 +394,7 @@ async def test_at8_run_surfaces_coverage_spread_telemetry(monkeypatch, frozen_oh
             agent_mode="rule_based", enable_oos=False, coverage_memory=True, user_id=1)
         ident = next(s for s in serialize_report(report)["sections"] if s["key"] == "strategy_identity")
         c = ident["numeric_fields"].get("coverage")
-        assert c and "novelty_rate" in c and c["cells_visited"] > 0 and c["grid_version"] == "v2"
+        assert c and "novelty_rate" in c and c["cells_visited"] > 0 and c["grid_version"] == "v3"
         # spread only: the per-template map holds COVERAGE FRACTIONS, and there is no performance ranking key
         assert all(0.0 <= v <= 1.0 for v in c["pct_covered_by_template"].values())
         assert not any(k in c for k in ("best_sharpe", "best_cell", "ranking", "top_cells"))

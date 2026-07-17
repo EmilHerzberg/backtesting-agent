@@ -29,34 +29,39 @@ from collections import deque
 from dataclasses import dataclass, field
 from itertools import product
 
-# ── Calibrated grid (v2) — PER-PARAMETER resolution from the signal-flip study ────────────────────────
+# ── Calibrated grid (v3) — PER-PARAMETER resolution from the 211-name warehouse study ─────────────────
 # Each parameter's just-noticeable-difference (JND): the step at which ~5% of in-market days change position
-# (= a meaningfully different strategy), measured on the REAL backtest engine over 6 diverse assets
-# (AAPL/MSFT/NVDA/KO/PG/SPY, 2015-2023, target T=0.05). See docs/design/COVERAGE-CALIBRATION.md +
-# scratchpad/calibrate_grid.py. Sensitivity is very non-uniform, so resolution is per-parameter, not per-kind.
-# The GRID_VERSION bump means v1-persisted cells never collide with these v2 cells (namespaced in the store).
-GRID_VERSION = "v2"
+# (= a meaningfully different strategy) for the conservative Q=0.85 name, measured on the REAL backtest
+# engine over the frozen 211-name survivorship-free panel (2000-2023, six regime windows, pre-registered
+# protocol docs/design/COVERAGE-CALIBRATION-V3-PROTOCOL.md §12; results calibration-v3-results.json sha
+# 68f6bbe9…, analysis CALIBRATION-V3-RESULTS-ANALYSIS.md). Supersedes the v2 6-asset/2015-2023 grid.
+# The GRID_VERSION bump namespaces persisted cells: v2 rows never collide with v3 cells — cross-run
+# coverage restarts at v3 and backfill_coverage() must be re-run per active scope (migration note).
+GRID_VERSION = "v3"
 
-# PERIOD dims: log ratio r (one cell per multiplicative 1+r band). Short oscillators (rsi/bollinger period)
-# flip on a ~5-8% change; sma fast is nearly inert (~30%). multi_indicator is COARSE — see _UNCALIBRATED.
+# PERIOD dims: log ratio r (one cell per multiplicative 1+r band), integer-capped at the fine end.
+# sma slow's 0.02 = the integer quantum at its governing base (FIX-31 mixed treatment); multi_indicator
+# is COARSE — see _UNCALIBRATED.
 _PERIOD_RATIO = {
-    ("sma_crossover", "fast_period"): 0.30, ("sma_crossover", "slow_period"): 0.16,
-    ("bollinger_breakout", "period"): 0.06,
-    ("macd_cross", "fast"): 0.20, ("macd_cross", "slow"): 0.22, ("macd_cross", "signal_period"): 0.20,
+    ("sma_crossover", "fast_period"): 0.0357, ("sma_crossover", "slow_period"): 0.02,
+    ("macd_cross", "fast"): 0.0896, ("macd_cross", "slow"): 0.1518, ("macd_cross", "signal_period"): 0.1089,
     ("multi_indicator", "sma_period"): 0.50, ("multi_indicator", "rsi_period"): 0.50,  # coarse (uncalibratable)
 }
-# THRESHOLD dims: absolute RSI points. MULTIPLIER dims: absolute std-dev units.
+# THRESHOLD dims: absolute RSI points. MULTIPLIER dims: absolute std-dev units. buy_threshold and std_dev
+# are SCALE-FREE for the sensitive tail (AM-10): the whole Q-ladder floored at every swept rung, so these
+# are the finest MEASURED still-crossing steps (upper bounds on the tail JND), not interior floors —
+# residual sub-cell distinctness is absorbed by the measured-ρ̄ effective-N reduction in the v2 gate wire.
 _THRESHOLD_STEP = {
-    ("rsi_reversion", "buy_threshold"): 2.0, ("rsi_reversion", "sell_threshold"): 2.0,
+    ("rsi_reversion", "buy_threshold"): 0.25, ("rsi_reversion", "sell_threshold"): 0.3996,
     ("multi_indicator", "rsi_buy"): 8.0, ("multi_indicator", "rsi_sell"): 8.0,   # coarse (uncalibratable)
 }
-_MULTIPLIER_STEP = {("bollinger_breakout", "std_dev"): 0.15}
-# Per-kind medians — fallback for any (template, param) pair not individually calibrated.
-_KIND_FALLBACK = {"period": 0.16, "threshold": 2.0, "multiplier": 0.15}
-# INTEGER-GOVERNED periods (noise-floor validation C2): for these, a +1-integer change already flips
-# ≫5% of positions at EVERY base (threshold-crossing on the RSI period amplifies a 1-day shift), so the JND
-# is below one integer — a log ratio would merge genuinely-distinct integers. Each integer is its own cell.
-_INTEGER_PERIOD = {("rsi_reversion", "period")}
+_MULTIPLIER_STEP = {("bollinger_breakout", "std_dev"): 0.025}
+# Per-kind medians over the calibrated TRADEABLE dials — fallback for any pair not individually calibrated.
+_KIND_FALLBACK = {"period": 0.0896, "threshold": 0.32, "multiplier": 0.025}
+# INTEGER-GOVERNED periods (v3: analytic base×r<1 at EVERY base + empirical +1-int confirmation): a
+# +1-integer change already flips ≥5% of positions, so a log ratio would merge genuinely-distinct
+# integers. Each integer is its own cell. bollinger period is NEW vs v2 (the 6-asset study missed it).
+_INTEGER_PERIOD = {("rsi_reversion", "period"), ("bollinger_breakout", "period")}
 # UNCALIBRATED templates: multi_indicator is NEAR-DEAD on liquid US equities 2015-2023 — it holds a position
 # for 0-11 bars over 9 years (its oversold-buy and price-below-SMA-exit conditions almost cancel), so its JND
 # cannot be signal-flip-measured and its params barely produce distinct strategies. It gets a deliberately

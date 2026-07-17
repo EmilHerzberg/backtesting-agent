@@ -56,7 +56,10 @@ sys.path.insert(0, str(_REPO))
 # --------------------------------------------------------------------------- #
 
 PANEL_PATH = _REPO / "docs" / "design" / "calibration-v3-panel.json"
+FRAME_PATH = _REPO / "docs" / "design" / "calibration-v3-frame-snapshot.json"
+ALTSEED_PATH = _REPO / "docs" / "design" / "calibration-v3-panel-altseeds.json"
 OUT_PATH = _REPO / "docs" / "design" / "calibration-v3-results.json"
+KSEED_PATH = _REPO / "docs" / "design" / "calibration-v3-kseed.json"
 SHARD_ROOT = _REPO.parent / "data" / "calibration_v3_shards"
 
 WINDOWS = {  # section 5 (frozen) + FIX-25 temporal halves
@@ -935,6 +938,111 @@ def _sr0(n_trials: int, variance: float) -> float:
 
 
 # --------------------------------------------------------------------------- #
+# FIX-11 K-seed stage — cross-panel-draw stability of the frozen JNDs
+# --------------------------------------------------------------------------- #
+
+def build_alt_panel(sleeves: dict, frame: dict, cutpoints: dict) -> list[dict]:
+    """Reconstruct full panel entries for one alt-seed draw from the committed
+    freeze artifacts (the altseeds file carries symbol lists only; the frame
+    snapshot supplies vol/cap features; cutpoints supply the cell buckets)."""
+    by_symbol = {}
+    for pool_name, names in frame["pools"].items():
+        for n in names:
+            by_symbol[n["symbol"]] = (pool_name, n)
+    t1, t2 = cutpoints["cap_tertiles_combined"]
+    vmed = cutpoints["vol_median_combined"]
+    entries = []
+    for sleeve, syms in sleeves.items():
+        if not isinstance(syms, list):
+            continue   # _fix1_exclusions counter
+        for sym in syms:
+            pool, n = by_symbol[sym]
+            alive = pool == "living"
+            cap = n.get("median_pit_cap")
+            entries.append({
+                "ticker_id": n["ticker_id"], "symbol": sym,
+                "alive_flag": alive, "sleeve": sleeve, "vol": n["vol"],
+                "cap_bucket": (None if not alive or cap is None else
+                               "small" if cap <= t1 else
+                               "mid" if cap <= t2 else "large_liquid"),
+                "vol_bucket": (None if not alive else
+                               "high" if n["vol"] >= vmed else "low"),
+            })
+    return entries
+
+
+def kseed_select(entries: list[dict], shard_dir: Path) -> dict:
+    """Per-dial CI-separated-min selection on ONE alt panel (fresh rng per
+    panel; the temporal-half adoption branch was inert on the primary and is
+    omitted here — noted in the artifact)."""
+    shards, excluded = _load_shards(entries, shard_dir)
+    tensor = Tensor(shards)
+    rng = np.random.default_rng(BOOT_SEED)
+    out = {}
+    for template, dials in PARAMS.items():
+        for pname, (kind, low, high, bases) in dials.items():
+            sel = _select(_candidates(tensor, (template, pname), kind, bases,
+                                      PRIMARY_Q, PRIMARY_T, REGIME_KEYS),
+                          PRIMARY_Q, PRIMARY_T, rng)
+            out[f"{template}.{pname}"] = sel["jnd"]
+    return out
+
+
+def run_kseed(workers: int) -> None:
+    if KSEED_PATH.exists():
+        print(f"REFUSED: {KSEED_PATH.name} already exists (write-once).")
+        sys.exit(3)
+    results = json.loads(OUT_PATH.read_text())
+    frame = json.loads(FRAME_PATH.read_text())
+    alts = json.loads(ALTSEED_PATH.read_text())
+    cutpoints = json.loads(PANEL_PATH.read_text())["cutpoints"]
+    extra = results["extra_rungs"]
+    dials = {t: sorted(p) for t, p in PARAMS.items()}
+    shard_dir = SHARD_ROOT / "full"
+
+    kout = {"note": ("FIX-11 draw-level stability: per-dial JND re-derived on "
+                     "the 4 alternate panel draws with the primary's frozen "
+                     "sweep (same windows/dials/extra rungs; shards shared). "
+                     "Bootstrap draws use a fresh stream per panel, so this "
+                     "checks stability, not byte-reproduction; the primary "
+                     "row is the frozen artifact value. Temporal-half "
+                     "adoption omitted (inert on the primary)."),
+            "seeds": {"20230701":
+                      {k: d["jnd"] for k, d in results["dials"].items()}},
+            "spread": {}}
+    for seed_str, sleeves in sorted(alts.items()):
+        entries = build_alt_panel(sleeves, frame, cutpoints)
+        print(f"kseed {seed_str}: {len(entries)} names")
+        failed = run_phase_a(entries, workers, shard_dir, WINDOWS, dials, extra)
+        if failed:
+            print(f"REFUSING kseed write: failed shards {failed}")
+            sys.exit(4)
+        kout["seeds"][seed_str] = kseed_select(entries, shard_dir)
+
+    # Spread verdict: per dial, JNDs across the 5 seeds mapped to rung indices
+    # of the frozen sweep; PASS = max-min <= 1 rung (section-6 tolerance).
+    for key in kout["seeds"]["20230701"]:
+        t, p = key.split(".")
+        kind = PARAMS[t][p][0]
+        rungs = sorted(set((RATIOS if kind == "period" else ABS_STEPS[kind])
+                           + extra.get(key, [])))
+        vals = [kout["seeds"][s].get(key) for s in kout["seeds"]]
+        if any(v is None for v in vals):
+            kout["spread"][key] = {"values": vals, "verdict": "UNDEFINED"}
+            continue
+        idxs = [next((i for i, r in enumerate(rungs) if r >= v - 1e-9),
+                     len(rungs) - 1) for v in vals]
+        kout["spread"][key] = {
+            "values": vals, "rung_indices": idxs,
+            "spread_rungs": max(idxs) - min(idxs),
+            "verdict": "STABLE" if max(idxs) - min(idxs) <= 1 else "UNSTABLE"}
+    KSEED_PATH.write_text(json.dumps(kout, indent=1, sort_keys=True))
+    n_unstable = sum(1 for v in kout["spread"].values()
+                     if v["verdict"] == "UNSTABLE")
+    print(f"wrote {KSEED_PATH.name}: "
+          f"{len(kout['spread']) - n_unstable}/{len(kout['spread'])} dials "
+          f"STABLE across the 5 panel draws")
+
 
 def main():
     os.environ["TQDM_DISABLE"] = "1"
@@ -948,7 +1056,14 @@ def main():
     ap.add_argument("--accept-crash-rate", action="store_true",
                     help="write results despite a crash-rate violation "
                          "(records the override in the artifact)")
+    ap.add_argument("--kseed", action="store_true",
+                    help="FIX-11 stage: re-derive JNDs on the 4 alternate "
+                         "panel draws and report the cross-seed spread")
     args = ap.parse_args()
+
+    if args.kseed:
+        run_kseed(args.workers)
+        return
 
     manifest = json.loads(PANEL_PATH.read_text())
     panel = manifest["panel"]

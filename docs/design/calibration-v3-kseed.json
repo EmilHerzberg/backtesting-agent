@@ -1,0 +1,247 @@
+{
+ "note": "FIX-11 draw-level stability: per-dial JND re-derived on the 4 alternate panel draws with the primary's frozen sweep (same windows/dials/extra rungs; shards shared). Bootstrap draws use a fresh stream per panel, so this checks stability, not byte-reproduction; the primary row is the frozen artifact value. Temporal-half adoption omitted (inert on the primary).",
+ "seeds": {
+  "20230701": {
+   "bollinger_breakout.period": 0.02,
+   "bollinger_breakout.std_dev": 0.025,
+   "macd_cross.fast": 0.0896,
+   "macd_cross.signal_period": 0.1089,
+   "macd_cross.slow": 0.1518,
+   "rsi_reversion.buy_threshold": 0.25,
+   "rsi_reversion.period": 0.02,
+   "rsi_reversion.sell_threshold": 0.3996,
+   "sma_crossover.fast_period": 0.0357,
+   "sma_crossover.slow_period": 0.02
+  },
+  "20230702": {
+   "bollinger_breakout.period": 0.02,
+   "bollinger_breakout.std_dev": 0.025,
+   "macd_cross.fast": 0.0988,
+   "macd_cross.signal_period": 0.1017,
+   "macd_cross.slow": 0.1387,
+   "rsi_reversion.buy_threshold": 0.3069,
+   "rsi_reversion.period": 0.02,
+   "rsi_reversion.sell_threshold": 0.4205,
+   "sma_crossover.fast_period": 0.0392,
+   "sma_crossover.slow_period": 0.02
+  },
+  "20230703": {
+   "bollinger_breakout.period": 0.02,
+   "bollinger_breakout.std_dev": 0.025,
+   "macd_cross.fast": 0.1021,
+   "macd_cross.signal_period": 0.107,
+   "macd_cross.slow": 0.1191,
+   "rsi_reversion.buy_threshold": 0.25,
+   "rsi_reversion.period": 0.02,
+   "rsi_reversion.sell_threshold": 0.3988,
+   "sma_crossover.fast_period": 0.0453,
+   "sma_crossover.slow_period": 0.02
+  },
+  "20230704": {
+   "bollinger_breakout.period": 0.02,
+   "bollinger_breakout.std_dev": 0.0263,
+   "macd_cross.fast": 0.1029,
+   "macd_cross.signal_period": 0.1031,
+   "macd_cross.slow": 0.1301,
+   "rsi_reversion.buy_threshold": 0.25,
+   "rsi_reversion.period": 0.02,
+   "rsi_reversion.sell_threshold": 0.3872,
+   "sma_crossover.fast_period": 0.0468,
+   "sma_crossover.slow_period": 0.02
+  },
+  "20230705": {
+   "bollinger_breakout.period": 0.02,
+   "bollinger_breakout.std_dev": 0.025,
+   "macd_cross.fast": 0.1034,
+   "macd_cross.signal_period": 0.1056,
+   "macd_cross.slow": 0.1401,
+   "rsi_reversion.buy_threshold": 0.25,
+   "rsi_reversion.period": 0.02,
+   "rsi_reversion.sell_threshold": 0.498,
+   "sma_crossover.fast_period": 0.0265,
+   "sma_crossover.slow_period": 0.02
+  }
+ },
+ "spread": {
+  "bollinger_breakout.period": {
+   "rung_indices": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "spread_rungs": 0,
+   "values": [
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02
+   ],
+   "verdict": "STABLE"
+  },
+  "bollinger_breakout.std_dev": {
+   "rung_indices": [
+    0,
+    0,
+    0,
+    1,
+    0
+   ],
+   "spread_rungs": 1,
+   "values": [
+    0.025,
+    0.025,
+    0.025,
+    0.0263,
+    0.025
+   ],
+   "verdict": "STABLE"
+  },
+  "macd_cross.fast": {
+   "rung_indices": [
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "spread_rungs": 0,
+   "values": [
+    0.0896,
+    0.0988,
+    0.1021,
+    0.1029,
+    0.1034
+   ],
+   "verdict": "STABLE"
+  },
+  "macd_cross.signal_period": {
+   "rung_indices": [
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "spread_rungs": 0,
+   "values": [
+    0.1089,
+    0.1017,
+    0.107,
+    0.1031,
+    0.1056
+   ],
+   "verdict": "STABLE"
+  },
+  "macd_cross.slow": {
+   "rung_indices": [
+    3,
+    3,
+    2,
+    3,
+    3
+   ],
+   "spread_rungs": 1,
+   "values": [
+    0.1518,
+    0.1387,
+    0.1191,
+    0.1301,
+    0.1401
+   ],
+   "verdict": "STABLE"
+  },
+  "rsi_reversion.buy_threshold": {
+   "rung_indices": [
+    0,
+    1,
+    0,
+    0,
+    0
+   ],
+   "spread_rungs": 1,
+   "values": [
+    0.25,
+    0.3069,
+    0.25,
+    0.25,
+    0.25
+   ],
+   "verdict": "STABLE"
+  },
+  "rsi_reversion.period": {
+   "rung_indices": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "spread_rungs": 0,
+   "values": [
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02
+   ],
+   "verdict": "STABLE"
+  },
+  "rsi_reversion.sell_threshold": {
+   "rung_indices": [
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "spread_rungs": 0,
+   "values": [
+    0.3996,
+    0.4205,
+    0.3988,
+    0.3872,
+    0.498
+   ],
+   "verdict": "STABLE"
+  },
+  "sma_crossover.fast_period": {
+   "rung_indices": [
+    2,
+    2,
+    2,
+    2,
+    1
+   ],
+   "spread_rungs": 1,
+   "values": [
+    0.0357,
+    0.0392,
+    0.0453,
+    0.0468,
+    0.0265
+   ],
+   "verdict": "STABLE"
+  },
+  "sma_crossover.slow_period": {
+   "rung_indices": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "spread_rungs": 0,
+   "values": [
+    0.02,
+    0.02,
+    0.02,
+    0.02,
+    0.02
+   ],
+   "verdict": "STABLE"
+  }
+ }
+}
