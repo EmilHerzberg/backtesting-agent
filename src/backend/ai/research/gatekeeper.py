@@ -114,15 +114,24 @@ class ResearchGatekeeper:
         self.n_trials_global = n_trials_global
         self.trial_sr_variance = trial_sr_variance
         self.trial_sr_variance_defaulted = False
+        self.trial_median_t = 0.0
 
     def update_registry_stats(
-        self, n_trials: int, sr_variance: float, *, variance_defaulted: bool = False
+        self, n_trials: int, sr_variance: float, *, variance_defaulted: bool = False,
+        trial_median_t: float = 0.0,
     ) -> None:
         """Update DSR inputs from the registry (M24: carry an explicit defaulted flag rather than
-        letting downstream sniff the magic floor value)."""
+        letting downstream sniff the magic floor value). PF4: a MEASURED 0.0 (perfectly clustered
+        trials) passes through un-defaulted — the gate's null-variance floor sets the bar and the
+        verdict stays firm; only a genuinely unmeasured variance gets the 0.001 default."""
         self.n_trials_global = n_trials
-        self.trial_sr_variance = sr_variance if sr_variance > 0.0 else 0.001
-        self.trial_sr_variance_defaulted = bool(variance_defaulted) or sr_variance <= 0.0
+        if variance_defaulted or sr_variance < 0.0:
+            self.trial_sr_variance = 0.001
+            self.trial_sr_variance_defaulted = True
+        else:
+            self.trial_sr_variance = sr_variance
+            self.trial_sr_variance_defaulted = False
+        self.trial_median_t = float(trial_median_t or 0.0)
 
     def evaluate(
         self,
@@ -172,6 +181,7 @@ class ResearchGatekeeper:
             n_trials_global=self.n_trials_global,
             trial_sr_variance=self.trial_sr_variance,
             trial_sr_variance_defaulted=self.trial_sr_variance_defaulted,
+            trial_median_t=self.trial_median_t,
             run_strategy_fn=context.get("run_strategy_fn"),          # M22: supplied per-candidate by the loop
         )
 

@@ -70,6 +70,8 @@ class GateContext:
     n_trials_global: int = 0
     trial_sr_variance: float = 0.0
     trial_sr_variance_defaulted: bool = False  # M24: variance is a floored default, not a measurement
+    trial_median_t: float = 0.0  # PF4: median trial return-series length (0 = unknown) — the
+    #                              null-variance floor must sit on the TRIALS' clock too
     run_strategy_fn: Any = None                # M22: re-run the candidate spec on arbitrary OHLCV (leakage canary)
 
 

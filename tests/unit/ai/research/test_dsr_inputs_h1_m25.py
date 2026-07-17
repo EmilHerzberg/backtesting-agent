@@ -58,13 +58,19 @@ def test_annualized_variance_collapses_dsr_but_per_period_discriminates():
 @pytest.mark.finding("M25")
 def test_dsr_inputs_count_only_measured_trials_with_ddof1():
     samples = [0.05, 0.08, 0.03, 0.10]
-    n, var, defaulted = _dsr_registry_inputs(samples)
+    n, var, defaulted, med_t = _dsr_registry_inputs(samples, [500, 600, 700, 800])
     assert n == 4                                            # measured trials, not total_iterations
     assert var == pytest.approx(float(np.var(samples, ddof=1)))  # ddof=1 (fixes N6 too)
     assert defaulted is False
+    assert med_t == 650.0                                    # PF4: the trials' clock, for the null floor
     # Too few measured trials → floored variance, explicitly flagged defaulted (M24), never a spurious 0.
-    assert _dsr_registry_inputs([0.05]) == (1, 0.001, True)
-    assert _dsr_registry_inputs([]) == (0, 0.001, True)
+    assert _dsr_registry_inputs([0.05]) == (1, 0.001, True, 0.0)
+    assert _dsr_registry_inputs([]) == (0, 0.001, True, 0.0)
+    # PF4 review fix: a MEASURED zero variance (perfectly clustered trials) is NOT re-flagged as
+    # unmeasured — the gate's null-variance floor takes it and the verdict stays FIRM.
+    n0, var0, def0, _ = _dsr_registry_inputs([0.05, 0.05, 0.05])
+    assert n0 == 3 and def0 is False
+    assert var0 == pytest.approx(0.0, abs=1e-30)   # float dust, not the 0.001 default
 
 
 def _dsr_ctx(returns, *, n_trials, sr_variance, defaulted):

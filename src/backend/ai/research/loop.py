@@ -315,21 +315,27 @@ def _period_sharpe(returns) -> float | None:
     return float(r.mean() / sd)
 
 
-def _dsr_registry_inputs(period_sharpes: list[float]) -> tuple[int, float, bool]:
-    """Deflated-Sharpe multiplicity inputs (H1 / M25 / M24).
+def _dsr_registry_inputs(period_sharpes: list[float],
+                         trial_lengths: list[int] | None = None,
+                         ) -> tuple[int, float, bool, float]:
+    """Deflated-Sharpe multiplicity inputs (H1 / M25 / M24 / PF4).
 
-    Returns ``(n_trials, trial_sr_variance, variance_defaulted)`` where N is the number of
-    gate-evaluable trials (those that produced a measurable per-period Sharpe) and the variance is
-    the per-period trial-Sharpe variance (ddof=1) — the two share one scope, so the expected-max-
-    Sharpe hurdle sits on the same footing as the per-period ``sr_hat`` the gate computes. When
-    fewer than two trials have been measured the variance cannot be estimated, so a floor is returned
-    with ``variance_defaulted=True`` (M24: explicit, not a magic-value sniff downstream). Replaces
-    the old ``(state.total_iterations, np.var(annualized_sharpes))`` which paired a padded iteration
-    count (errors/skips included) with an annualized variance ~252x too large."""
+    Returns ``(n_trials, trial_sr_variance, variance_defaulted, trial_median_t)`` where N is the
+    number of gate-evaluable trials (those that produced a measurable per-period Sharpe) and the
+    variance is the per-period trial-Sharpe variance (ddof=1) — the two share one scope, so the
+    expected-max-Sharpe hurdle sits on the same footing as the per-period ``sr_hat`` the gate
+    computes. ``trial_median_t`` is the median trial return-series length: the PF4 null-variance
+    floor must sit on the TRIALS' clock (their null dispersion ~1/T_trial), not the candidate's.
+    When fewer than two trials have been measured the variance cannot be estimated, so a floor is
+    returned with ``variance_defaulted=True`` (M24). A MEASURED variance of exactly 0.0 (perfectly
+    clustered trials) is returned as-is with ``variance_defaulted=False`` — the PF4 floor in the
+    gate sets the bar and the verdict stays FIRM (review fix: the old path re-flagged it as
+    'unmeasured' and leaked a provisional PASS on exactly the clustering extreme)."""
     n = len(period_sharpes)
+    med_t = float(np.median(trial_lengths)) if trial_lengths else 0.0
     if n > 1:
-        return n, float(np.var(period_sharpes, ddof=1)), False
-    return n, 0.001, True
+        return n, float(np.var(period_sharpes, ddof=1)), False, med_t
+    return n, 0.001, True, med_t
 
 
 def _train_split(window_start: str, window_end: str) -> str | None:
@@ -759,6 +765,7 @@ async def research_loop(
     # multiplicity variance + trial count (H1/M25 — the two must share per-period units and scope).
     _sharpe_values: list[float] = []
     _period_sharpe_values: list[float] = []
+    _trial_lengths: list[int] = []   # PF4: trial return-series lengths (the trials' clock)
 
     def emit(event_type: str, payload: dict | None = None):
         if on_event:
@@ -980,6 +987,9 @@ async def research_loop(
             _sr_period = _period_sharpe(returns)  # H1: per-period Sharpe for DSR multiplicity
             if _sr_period is not None:
                 _period_sharpe_values.append(_sr_period)
+                # PF4: the trials' own return-series lengths — the null dispersion of the
+                # cross-trial Sharpe spread scales with the TRIALS' clocks, not the candidate's.
+                _trial_lengths.append(len(returns) if returns is not None else 0)
             emit("execute", {
                 "strategy_hash": spec.get("strategy_hash", ""),
                 "sharpe_annual": sharpe,
@@ -990,9 +1000,12 @@ async def research_loop(
             state.phase = ResearchPhase.GATING
             # H1/M25: per-period trial-Sharpe variance + a trial count that reflects only
             # gate-evaluable trials (not state.total_iterations, which counts errors/skips).
-            _dsr_n_trials, sr_variance, _sr_defaulted = _dsr_registry_inputs(_period_sharpe_values)
+            _dsr_n_trials, sr_variance, _sr_defaulted, _trial_med_t = _dsr_registry_inputs(
+                _period_sharpe_values, _trial_lengths
+            )
             gatekeeper.update_registry_stats(
-                _dsr_n_trials, sr_variance, variance_defaulted=_sr_defaulted
+                _dsr_n_trials, sr_variance, variance_defaulted=_sr_defaulted,
+                trial_median_t=_trial_med_t,
             )
             # M22: a closure that re-runs THIS candidate's spec on arbitrary OHLCV — the leakage
             # canary runs it on zero-drift synthetics (only reached by survivors of the cheaper gates).
