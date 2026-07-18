@@ -6,6 +6,8 @@ never a silent retune. This is the never-loosen invariant in executable form.
 """
 
 import json
+
+import pytest
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[4]
@@ -35,6 +37,20 @@ def test_oos_lockbox_constants_match_the_freeze():
 def test_coverage_constants_match_the_freeze():
     from src.backend.ai.research.coverage import GRID_VERSION
     assert GRID_VERSION == CFG["coverage_v2"]["grid_version"]
+
+
+def test_fb4_constants_match_the_freeze():
+    from src.backend.backtesting.lockbox.service import (
+        CAMPAIGN_ALPHA_FAMILY,
+        CAMPAIGN_OOS_BUDGET,
+        OOSLockboxService,
+    )
+    f = CFG["fb4_campaign_oos_control"]
+    assert CAMPAIGN_OOS_BUDGET == f["campaign_oos_budget"]
+    assert CAMPAIGN_ALPHA_FAMILY == f["campaign_alpha_family"]
+    # the FIXED budget-sized family bar (review fix) — pinned so the formula cannot drift
+    assert OOSLockboxService.campaign_adjusted_t(0) == pytest.approx(3.083, abs=0.005)
+    assert OOSLockboxService.campaign_adjusted_t(49) == OOSLockboxService.campaign_adjusted_t(0)
 
 
 def test_power_curve_evidence_hash_matches_the_freeze():

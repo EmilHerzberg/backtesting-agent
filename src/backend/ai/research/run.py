@@ -140,7 +140,9 @@ async def run_research(
     on_event: Any = None,
     control: Any = None,
     enable_oos: bool = True,          # D9/H5: OOS validation is the honest default (opt OUT explicitly)
-    oos_db_path: str = ":memory:",    # per-run by default (disk-clean); set a file path for cross-run persistence
+    oos_db_path: str = ":memory:",    # library default: per-run (disk-clean) — FB4's campaign ledger is
+    #                                   then WITHIN-RUN ONLY. The API server passes a persistent file so
+    #                                   the campaign cap + family bar truly accumulate across runs.
     enable_leakage_canary: bool = True,  # M22: run the leakage canary on survivors (re-runs on synthetics)
     use_price_cache: bool = False,       # persist fetched bars in the DB cache (paid/intraday quota);
                                          # OFF for the yfinance-daily default so the server DB doesn't grow
@@ -160,6 +162,9 @@ async def run_research(
     oos_min_sharpe: float | None = None,  # D1 (owner): OOS quality floor, clamped to [0.5, 1.0]; additive
     #                                   to the significance + excess tests, never weakening them.
     #                                   None → loop.OOS_MIN_SHARPE_DEFAULT (single source of truth)
+    soft_dsr: bool = False,           # RT2/Track 7: advisory stage-1 — a DSR FAIL becomes a recorded
+    #                                   weakness and the candidate proceeds to the FB4-controlled OOS
+    #                                   lockbox. GUARDED: only honored in robustness mode with OOS on.
     user_id: int | None = None,       # v1: coverage scope (per-user); None → shared scope "0"
 ) -> ResearchReport:
     """Run the full autonomous research pipeline.
@@ -300,7 +305,17 @@ async def run_research(
     # not a bare commission — otherwise AI-discovered strategies are graded ~30% cheaper than documented.
     from src.backend.backtesting.costs.model import effective_commission_pct
     executor = ResearchExecutor(commission=effective_commission_pct(commission_pct, spread_bps, slippage_bps))
-    gatekeeper = ResearchGatekeeper(rigor=rigor, mode=mode)
+    # RT2 sequencing guard (review fix): the spec softens DSR only when (a) OOS is on, (b) FB4
+    # multiplicity control is active AND (c) the MON1 power canary has PROVEN the gate vacuous.
+    # MON1 is not built yet (Track 6), so a soft_dsr request is REFUSED loudly — the mechanism is
+    # plumbed and tested, but cannot activate before its preconditions exist.
+    if soft_dsr:
+        raise ValueError(
+            "soft_dsr is sequencing-blocked: the MON1 power canary (Track 6) must exist and "
+            "prove the DSR gate vacuous before the advisory stage-1 may activate "
+            "(COVERAGE-GATE-SAFETY-MECHANISMS.md RT2 preconditions)."
+        )
+    gatekeeper = ResearchGatekeeper(rigor=rigor, mode=mode, soft_dsr=False)
     critic = AdversarialCritic(
         llm=(llm if agent_mode in ("ai_assisted", "full_ai") else None),
         ledger=ledger,
@@ -352,6 +367,8 @@ async def run_research(
         coverage_dsr=bool(coverage_dsr and coverage is not None),
         oos_min_sharpe=(oos_min_sharpe if oos_min_sharpe is not None
                         else _OOS_MIN_SHARPE_DEFAULT),
+        # FB4: campaign fresh-data ledger, scoped like the coverage memory (per user).
+        oos_campaign_scope=str(user_id if user_id is not None else 0),
     )
 
     # ── v1 coverage: flush newly-visited cells + stash spread telemetry for the report ──

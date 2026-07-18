@@ -86,6 +86,9 @@ class StartRunRequest(BaseModel):
     # D1 owner knob: OOS quality floor. Bounds enforced at the API edge (422 on out-of-band) AND
     # re-clamped inside the verdict; None → the loop's frozen default (single source of truth).
     oos_min_sharpe: float | None = Field(default=None, ge=0.5, le=1.0)
+    # RT2/Track 7: advisory stage-1 (DSR FAIL → weakness, candidate proceeds to the FB4-controlled
+    # lockbox). Guarded server-side: only honored in robustness mode with OOS enabled.
+    soft_dsr: bool = False
 
     @model_validator(mode="after")
     def _validate_regime_window(self):
@@ -454,6 +457,11 @@ async def _run_and_track(rec: RunRecord, req: StartRunRequest) -> None:
             coverage_memory=req.coverage_memory,   # v1 cross-run coverage memory (robustness only)
             coverage_dsr=req.coverage_dsr,         # coverage-v2 N-wire (inert without coverage_memory)
             oos_min_sharpe=req.oos_min_sharpe,     # D1 quality floor (clamped inside the verdict)
+            soft_dsr=req.soft_dsr,                 # RT2 advisory stage-1 (server-guarded)
+            # FB4 (review fix): the SERVER path uses a persistent lockbox DB so the campaign
+            # ledger (cap + family bar) truly accumulates across runs per user — an in-memory
+            # ledger would reset every run and make restarting a free multiplicity wipe.
+            oos_db_path="oos_lockbox.db",
             user_id=rec.user_id,                    # coverage scope (per-user)
             on_start=_on_start,
             on_event=_on_event,

@@ -548,7 +548,8 @@ class _PromotionToken:
 
 def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
                  oos_days: float = 0, seed: int = 0,
-                 min_sharpe: float = OOS_MIN_SHARPE_DEFAULT) -> tuple[Any, Any, dict]:
+                 min_sharpe: float = OOS_MIN_SHARPE_DEFAULT,
+                 t_star: float | None = None) -> tuple[Any, Any, dict]:
     """D5 / H3 + valconf/R5 + D2 — the OOS pass bar: frequency-aware, graded, RISK-ADJUSTED.
 
     Returns ``(OOSOutcome, ConfidenceAssessment, extras)``: the outcome is the control verdict the lockbox/
@@ -569,11 +570,14 @@ def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
     from src.backend.backtesting.engine.confidence import OOS_FLOOR, assess_confidence
     from src.backend.backtesting.lockbox.service import OOSOutcome
 
+    # FB4: the fixed budget-sized family bar (Šidák over the campaign's WHOLE budget — review
+    # fix: constant per test, order-free; floor = the single-test VALIDATE_T). None → single bar.
+    eff_t = float(t_star) if t_star is not None and t_star > VALIDATE_T else VALIDATE_T
     a = assess_confidence(
         train_trades=int(train_trades), train_days=float(train_days), holdout_days=float(oos_days),
         test_trades=int(m.get("n_trades", 0)), trade_returns=m.get("trade_returns") or [],
         daily_returns=m.get("returns", []), exposure_time=float(m.get("exposure_time", 0.0) or 0.0),
-        observed_sharpe=float(m.get("sharpe_annual", 0.0)), ppy=252.0, t_star=VALIDATE_T,
+        observed_sharpe=float(m.get("sharpe_annual", 0.0)), ppy=252.0, t_star=eff_t,
         floor=OOS_FLOOR, seed=int(seed),
         in_market_returns=m.get("returns_in_market"),   # valconf: edge-when-deployed Sharpe + CI
     )
@@ -616,6 +620,7 @@ def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
               "total_return_floor": bool(OOS_TOTAL_RETURN_FLOOR),
               "min_sharpe_floor": floor,
               "oos_sharpe": round(obs_sharpe, 4)}
+    extras["t_star"] = round(eff_t, 4)      # FB4 telemetry: the bar this verdict faced
     if passed and obs_sharpe < floor:
         ci_high = getattr(a, "ci_high", None)
         if ci_high is not None and ci_high < floor:
@@ -679,6 +684,7 @@ def _run_oos_lockbox(
     emit: Any,
     lineage_tracker: LineageTracker | None = None,
     oos_min_sharpe: float = OOS_MIN_SHARPE_DEFAULT,
+    campaign_scope: str | None = None,   # FB4: campaign OOS ledger scope (None = layer off)
 ) -> None:
     """Run OOS lockbox evaluation for a candidate. Budget-exempt: does NOT consume a run.
 
@@ -718,6 +724,11 @@ def _run_oos_lockbox(
     # closure cell to surface it via _record_oos afterwards (spec §5.6 — evidence rides alongside).
     captured: dict[str, Any] = {}
 
+    # FB4: read the campaign ledger and derive the Šidák-adjusted bar for THIS test.
+    _t_adj: float | None = None
+    if campaign_scope is not None and hasattr(lockbox, "campaign_adjusted_t"):
+        _t_adj = lockbox.campaign_adjusted_t(lockbox.campaign_tests(campaign_scope))
+
     def _oos_backtest() -> Any:
         oos_start = spec.get("window_end") or _env_bounds()[0]
         oos_end = _env_bounds()[1]
@@ -737,12 +748,15 @@ def _run_oos_lockbox(
             # valconf CI seeding: the OOS band is a reproducible property of this strategy's fingerprint.
             seed=_seed_from_hash(getattr(candidate, "strategy_hash", "") or ""),
             min_sharpe=oos_min_sharpe,
+            t_star=_t_adj,
         )
         captured["assessment"] = assessment
         captured["extras"] = extras
         return outcome
 
-    outcome = lockbox.evaluate(token, run_oos_backtest=_oos_backtest)
+    outcome = lockbox.evaluate(
+        token, run_oos_backtest=_oos_backtest,
+        **({"campaign_scope": campaign_scope} if campaign_scope is not None else {}))
     _record_oos(state, candidate, outcome.value, budget_lineage, emit,
                 captured.get("assessment"), captured.get("extras"))
 
@@ -773,6 +787,7 @@ async def research_loop(
     coverage: Any = None,        # CoverageMap when coverage memory is on (sampling state)
     coverage_dsr: bool = False,  # coverage-v2 N-wire: size sr0 to the campaign visited count
     oos_min_sharpe: float = OOS_MIN_SHARPE_DEFAULT,  # D1 quality floor (owner knob, 0.5-1.0)
+    oos_campaign_scope: str | None = None,           # FB4 campaign ledger scope
 ) -> ResearchState:
     """Run the autonomous research loop until budget exhausted or goal met.
 
@@ -1263,7 +1278,8 @@ async def research_loop(
                 state.phase = ResearchPhase.OOS_EVALUATING
                 try:
                     _run_oos_lockbox(lockbox, candidate, spec, state, data_agent, executor, emit,
-                                     lineage_tracker, oos_min_sharpe=oos_min_sharpe)
+                                     lineage_tracker, oos_min_sharpe=oos_min_sharpe,
+                                     campaign_scope=oos_campaign_scope)
                 except Exception as exc:
                     logger.error("OOS lockbox error: %s", exc, exc_info=True)
 

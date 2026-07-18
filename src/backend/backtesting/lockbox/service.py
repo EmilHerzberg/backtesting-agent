@@ -42,6 +42,29 @@ class OOSResultRow(LockboxBase):
     evaluated_at = Column(String(32), nullable=False)
 
 
+class OOSCampaignRow(LockboxBase):
+    """FB4: the CAMPAIGN-wide fresh-data ledger. Per-lineage budgets stop one
+    hypothesis from re-rolling its hold-out; this stops a campaign from doing
+    the same across MANY lineages — every terminal OOS evaluation in a scope
+    counts here, the count drives the Šidák-adjusted family bar, and the
+    depletable cap turns volume into honest absence (UNEVALUATED), never into
+    extra lottery tickets."""
+
+    __tablename__ = "oos_campaign_ledger"
+    scope_key = Column(String(64), primary_key=True)
+    tests_terminal = Column(Integer, nullable=False, default=0)
+    budget_total = Column(Integer, nullable=False, default=50)
+
+
+# FB4 frozen constants (mirrored in docs/design/coverage-v2-gate-config.json +
+# the tamper test): a campaign may spend at most CAMPAIGN_OOS_BUDGET terminal
+# hold-out verdicts, and the family-wise false-PASS rate across the WHOLE budget
+# is held at CAMPAIGN_ALPHA_FAMILY via the fixed budget-sized Šidák bar
+# (every test faces t* ≈ 3.083 — see campaign_adjusted_t).
+CAMPAIGN_OOS_BUDGET = 50
+CAMPAIGN_ALPHA_FAMILY = 0.05
+
+
 class PromotionToken:
     """Human approval token for OOS evaluation."""
 
@@ -89,6 +112,29 @@ class OOSLockboxService:
                 return 0
             return row.budget_total - row.budget_used
 
+    def campaign_tests(self, scope_key: str) -> int:
+        """FB4: how many terminal OOS verdicts this campaign scope has spent."""
+        with Session(self._engine) as session:
+            row = session.get(OOSCampaignRow, scope_key)
+            return int(row.tests_terminal) if row else 0
+
+    @staticmethod
+    def campaign_adjusted_t(tests_so_far: int = 0) -> float:
+        """FB4: the per-test one-sided t* holding the FAMILY-wise false-PASS rate
+        across the campaign's ENTIRE budget at CAMPAIGN_ALPHA_FAMILY.
+
+        Review fix (blocker): the earlier sequential scheme (m = spent+1) let
+        early tests spend big alpha slices — measured FWER 20.6% at the 50-test
+        budget, 4x the target. True control needs the FIXED budget-sized Šidák
+        bar for EVERY test: alpha_i = 1-(1-alpha)^(1/BUDGET) → t* ≈ 3.083,
+        giving FWER exactly ≤ alpha at full depletion and below it before.
+        Constant by construction (also kills within-run order gaming); the
+        ``tests_so_far`` arg is retained for interface stability and ignored."""
+        import scipy.stats
+
+        alpha_i = 1.0 - (1.0 - CAMPAIGN_ALPHA_FAMILY) ** (1.0 / CAMPAIGN_OOS_BUDGET)
+        return float(max(scipy.stats.norm.ppf(1.0 - alpha_i), 1.645))
+
     def get_result(self, strategy_hash: str) -> OOSOutcome | None:
         """Return the stored *terminal* outcome for a strategy, or None if never evaluated.
 
@@ -116,6 +162,7 @@ class OOSLockboxService:
         token: PromotionToken,
         *,
         run_oos_backtest: Any = None,  # callable -> OOSOutcome (or bool for back-compat)
+        campaign_scope: str | None = None,  # FB4: campaign ledger scope (None = layer inactive)
     ) -> OOSOutcome:
         """Run the OOS evaluation.
 
@@ -156,6 +203,22 @@ class OOSLockboxService:
                     f"OOS budget exhausted for lineage {token.lineage_id}"
                 )
 
+            # FB4: the CAMPAIGN cap, checked up front like the lineage budget. A depleted
+            # campaign yields honest absence for every further candidate — more volume can
+            # never buy more lottery tickets against the same hold-out data.
+            campaign = None
+            if campaign_scope is not None:
+                campaign = session.get(OOSCampaignRow, campaign_scope)
+                if campaign is None:
+                    campaign = OOSCampaignRow(scope_key=campaign_scope,
+                                              tests_terminal=0,
+                                              budget_total=CAMPAIGN_OOS_BUDGET)
+                    session.add(campaign)
+                if campaign.tests_terminal >= campaign.budget_total:
+                    raise BudgetExhaustedError(
+                        f"FB4 campaign OOS budget exhausted for scope {campaign_scope}"
+                    )
+
             # Run the actual OOS evaluation (opaque to caller).
             # H17: an exception means we COULD NOT evaluate — that is UNEVALUATED, never a terminal
             # FAIL. Swallow the body (it may embed OOS metrics) but do not consume budget or record.
@@ -169,8 +232,11 @@ class OOSLockboxService:
                 # Too thin to judge — not a failure. No budget, no row: retryable later.
                 return OOSOutcome.UNEVALUATED
 
-            # Terminal (PASS/FAIL): consume budget and record the result atomically.
+            # Terminal (PASS/FAIL): consume budget (lineage + FB4 campaign) and record the
+            # result atomically.
             budget.budget_used += 1
+            if campaign is not None:
+                campaign.tests_terminal += 1
             session.add(OOSResultRow(
                 strategy_hash=token.strategy_hash,
                 lineage_id=token.lineage_id,

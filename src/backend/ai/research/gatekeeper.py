@@ -42,7 +42,8 @@ RIGOR_PRESETS: dict[str, dict[str, float]] = {
 }
 
 
-def build_default_pipeline(rigor: dict[str, float] | None = None, mode: str = "robustness") -> GatePipeline:
+def build_default_pipeline(rigor: dict[str, float] | None = None, mode: str = "robustness",
+                           soft_dsr: bool = False) -> GatePipeline:
     """Assemble the default gate pipeline. `rigor` (a preset bundle) overrides the
     relevant gate thresholds in place — instance attributes shadow the class constants
     (F1: the allowed finetune that makes the Rigor preset bind). `mode="regime"` flips the
@@ -82,10 +83,16 @@ def build_default_pipeline(rigor: dict[str, float] | None = None, mode: str = "r
         # floor + benchmark_relative (the anti-garbage / not-dominated floor) stay HARD.
         # DSR stays HARD too (safety pass 2026-07-16, reconciled plan §2c): multiplicity control is an
         # integrity gate, and regime mode runs with the robustness OOS disabled — softening DSR while the
-        # OOS backstop is off was a pure loosening. Soft-DSR anywhere is sequencing-blocked until FB4
-        # (campaign-wide OOS multiplicity control) ships.
+        # OOS backstop is off was a pure loosening.
         for _g in (perf, cost, lag):
             _g.severity = GateSeverity.SOFT
+    elif soft_dsr:
+        # RT2 (Track 7, FB4-gated): the advisory stage-1. A DSR FAIL becomes a recorded WEAKNESS
+        # ("could be luck") instead of an execution — the candidate proceeds to the OOS lockbox,
+        # whose FB4 campaign ledger caps the fresh-data spend and Šidák-raises the per-test bar
+        # with every terminal verdict. The caller (run.py) enforces the guard: soft_dsr is only
+        # honored in robustness mode WITH the lockbox enabled (the FB4-controlled backstop).
+        dsr.severity = GateSeverity.SOFT
     return GatePipeline([
         SpecValidationGate(),
         ProviderCapabilityGate(),
@@ -109,8 +116,10 @@ class ResearchGatekeeper:
         trial_sr_variance: float = 0.001,
         rigor: str = "standard",
         mode: str = "robustness",
+        soft_dsr: bool = False,
     ):
-        self.pipeline = build_default_pipeline(RIGOR_PRESETS.get(rigor, RIGOR_PRESETS["standard"]), mode=mode)
+        self.pipeline = build_default_pipeline(RIGOR_PRESETS.get(rigor, RIGOR_PRESETS["standard"]),
+                                               mode=mode, soft_dsr=soft_dsr)
         self.n_trials_global = n_trials_global
         self.trial_sr_variance = trial_sr_variance
         self.trial_sr_variance_defaulted = False
