@@ -123,6 +123,53 @@ def test_buy_hold_comparison_charges_the_benchmark_its_fees():
     assert extras["excess_total_return_net"] > 0
 
 
+@pytest.mark.finding("D1")
+def test_quality_floor_below_but_not_ruled_out_is_unevaluated_not_fail():
+    # D1 CI-aware (Track-5 review): OOS Sharpe 0.7 under the 0.9 floor, but the CI cannot rule
+    # the bar out (a true-0.9+ edge measures 0.7 routinely) → UNEVALUATED (retryable, budget
+    # preserved), NEVER a terminal kill on estimation noise.
+    m = {"n_trades": 30, "trade_returns": _significant_returns(30),
+         "total_return": 0.30, "buy_hold_return": 0.05,
+         "sharpe_annual": 0.7, "buy_hold_sharpe": 0.3}
+    outcome, _a, extras = _oos_verdict(m)
+    assert outcome is OOSOutcome.UNEVALUATED
+    assert extras["floor_undetermined"] is True
+    assert extras["min_sharpe_floor"] == 0.9 and extras["oos_sharpe"] == 0.7
+
+
+@pytest.mark.finding("D1")
+def test_quality_floor_statistically_established_miss_is_a_distinct_fail(monkeypatch):
+    # When the CI DOES rule the bar out (upper bound < floor), the verdict is a real terminal
+    # FAIL — but distinguishable from "no skill" via the floor_miss marker.
+    import dataclasses
+
+    import src.backend.backtesting.engine.confidence as conf
+
+    real = conf.assess_confidence
+
+    def tight_ci(*args, **kwargs):
+        return dataclasses.replace(real(*args, **kwargs), ci_high=0.6)
+
+    monkeypatch.setattr(conf, "assess_confidence", tight_ci)
+    m = {"n_trades": 30, "trade_returns": _significant_returns(30),
+         "total_return": 0.30, "buy_hold_return": 0.05,
+         "sharpe_annual": 0.4, "buy_hold_sharpe": 0.1}
+    outcome, _a, extras = _oos_verdict(m)
+    assert outcome is OOSOutcome.FAIL and extras["floor_miss"] is True
+
+
+@pytest.mark.finding("D1")
+def test_quality_floor_is_configurable_within_the_band_and_clamped():
+    m = {"n_trades": 30, "trade_returns": _significant_returns(30),
+         "total_return": 0.30, "buy_hold_return": 0.05,
+         "sharpe_annual": 0.7, "buy_hold_sharpe": 0.3}
+    # owner lowers the floor to 0.5 → the same edge validates (observed 0.7 >= 0.5)
+    assert _oos_verdict(m, min_sharpe=0.5)[0] is OOSOutcome.PASS
+    # out-of-band values clamp to [0.5, 1.0] — the knob can neither vanish nor exceed the band
+    assert _oos_verdict(m, min_sharpe=0.0)[2]["min_sharpe_floor"] == 0.5
+    assert _oos_verdict(m, min_sharpe=5.0)[2]["min_sharpe_floor"] == 1.0
+
+
 @pytest.mark.finding("D2")
 def test_missing_benchmark_is_unevaluated_not_a_degraded_pass():
     # M46 (review fix): benchmark_available=False means "no benchmark computable", not "benchmark

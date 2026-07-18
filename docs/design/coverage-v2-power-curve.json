@@ -1,0 +1,120 @@
+{
+ "constants": {
+  "collapsed_v_point": [
+   "campaign_5k_collapsed_V",
+   5000,
+   1e-09
+  ],
+  "edges": [
+   0.0,
+   0.3,
+   0.5,
+   0.7,
+   0.9,
+   1.0,
+   1.2,
+   1.5,
+   2.0,
+   2.5,
+   3.0,
+   3.5
+  ],
+  "n_trials": 200,
+  "points": {
+   "campaign_5k": 5000,
+   "campaign_full": 172831,
+   "per_run": 0
+  },
+  "power_floor_IMPL": 0.8,
+  "reps": 400,
+  "scope_note": "DSR gate only (the coverage-v2-changed gate); gaussian returns; skew/kurtosis stress recorded as an extension",
+  "seed": 20260718,
+  "sigma_daily": 0.01,
+  "t_bars": 2265,
+  "v_measured": 0.005
+ },
+ "d1_recommendation": {
+  "reference_edge": null,
+  "rule": "smallest edge in {0.9, 1.0} with power(campaign_full) >= power_floor"
+ },
+ "power_curve": {
+  "0.0": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.0,
+   "campaign_full": 0.0,
+   "per_run": 0.0
+  },
+  "0.3": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.0,
+   "campaign_full": 0.0,
+   "per_run": 0.0
+  },
+  "0.5": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.0,
+   "campaign_full": 0.0,
+   "per_run": 0.0
+  },
+  "0.7": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.0,
+   "campaign_full": 0.0,
+   "per_run": 0.0
+  },
+  "0.9": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.0,
+   "campaign_full": 0.0,
+   "per_run": 0.0
+  },
+  "1.0": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.0,
+   "campaign_full": 0.0,
+   "per_run": 0.0
+  },
+  "1.2": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.0,
+   "campaign_full": 0.0,
+   "per_run": 0.0
+  },
+  "1.5": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.0,
+   "campaign_full": 0.0,
+   "per_run": 0.0
+  },
+  "2.0": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.02,
+   "campaign_full": 0.0,
+   "per_run": 0.0
+  },
+  "2.5": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.25,
+   "campaign_full": 0.0,
+   "per_run": 0.0
+  },
+  "3.0": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.8475,
+   "campaign_full": 0.0,
+   "per_run": 0.025
+  },
+  "3.5": {
+   "campaign_5k": 0.0,
+   "campaign_5k_collapsed_V": 0.9925,
+   "campaign_full": 0.0,
+   "per_run": 0.3375
+  }
+ },
+ "size_at_null": {
+  "campaign_5k": 0.0,
+  "campaign_5k_collapsed_V": 0.0,
+  "campaign_full": 0.0,
+  "per_run": 0.0
+ }
+}

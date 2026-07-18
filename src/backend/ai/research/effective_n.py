@@ -78,6 +78,45 @@ def mp_denoised_effective_count(corr: np.ndarray, t_obs: int) -> float:
     return participation_ratio(ev)
 
 
+def market_mode_stripped_effective_count(corr: np.ndarray, t_obs: int) -> float:
+    """PF2/PF3 (Track-5): variance-share-weighted residual diversity count.
+
+    Real strategy families share their asset's market mode (off-diagonal
+    correlations floor ~0.55 at any grid distance), which collapses the raw
+    participation ratio to ~1-2 regardless of true strategy diversity (the
+    Track-4 pinned limitation). This estimator strips the TOP eigenvector
+    (the family's common mode), counts the participation ratio of the
+    RENORMALIZED residual, and WEIGHTS that count by the residual's share of
+    total variance:  1 + residual_share × PR(residual).
+
+    The weighting is load-bearing (caught by the anti-gaming test): without
+    it, true near-clones' independent-but-TINY idiosyncratic noise renormalizes
+    into full unit-scale diversity and 30 clones count as ~30. With it, clones
+    → ~1 (residual share ≈ 0) while genuinely-distinct groups riding one beta
+    retain their diversity in proportion to how much of their behaviour is
+    actually their own. Semantics (honest): a CONSERVATIVE, lower-bound-leaning
+    measure of independent-trial multiplicity — the shared mode genuinely
+    couples the family's Sharpe estimators, so K distinct groups at high beta
+    count as fewer than K. The PF-phase largest-within-tolerance rule composes
+    estimator candidates; over-counting is the SAFE direction when this is
+    used to reduce the raw visited N. Still NOT wired to the gate."""
+    corr = np.asarray(corr, dtype=float)
+    n = corr.shape[0]
+    if n < 3 or t_obs < n + 1:
+        return float(max(n, 1))
+    sym = (corr + corr.T) / 2.0
+    ev, vec = np.linalg.eigh(sym)
+    ev = np.clip(ev, 0.0, None)
+    total = float(ev.sum())
+    resid_share = max(1.0 - float(ev[-1]) / total, 0.0) if total > 0 else 0.0
+    resid = sym - ev[-1] * np.outer(vec[:, -1], vec[:, -1])
+    d = np.sqrt(np.clip(np.diag(resid), 1e-12, None))
+    resid = resid / np.outer(d, d)
+    np.fill_diagonal(resid, 1.0)
+    pr_resid = max(mp_denoised_effective_count(resid, t_obs) - 1.0, 0.0)
+    return 1.0 + resid_share * pr_resid
+
+
 @lru_cache(maxsize=1)
 def _frozen() -> dict:
     try:

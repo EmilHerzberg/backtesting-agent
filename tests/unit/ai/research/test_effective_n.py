@@ -6,6 +6,7 @@ import pytest
 from src.backend.ai.research.effective_n import (
     campaign_search_size,
     frozen_ratio,
+    market_mode_stripped_effective_count,
     mp_denoised_effective_count,
     participation_ratio,
 )
@@ -54,6 +55,42 @@ def test_beta_dominated_family_collapses_documented_limitation():
     assert meff < 3.0     # collapses despite 30 idiosyncratically-distinct streams
 
 
+@pytest.mark.finding("PF3")
+def test_market_mode_stripping_discriminates_real_diversity_under_shared_beta():
+    # Track-5: the stripped estimator must see THROUGH the shared market mode. K=5 genuinely
+    # distinct strategy groups riding one beta-0.8 factor: the raw Meff collapses to ~1-2, the
+    # stripped count must recover a REAL diversity signal — damped by the shared-mode share
+    # (honest semantics: the common mode genuinely couples the family's Sharpes, so the count
+    # sits between 1 and K, never back at ~1 and never inflated toward the raw 30).
+    rng = np.random.default_rng(23)
+    t = 4000
+    market = rng.standard_normal(t)
+    groups = [rng.standard_normal(t) for _ in range(5)]
+    series = np.vstack([0.8 * market + 0.5 * g + 0.1 * rng.standard_normal(t)
+                        for g in groups for _ in range(6)])
+    corr = np.corrcoef(series)
+    stripped = market_mode_stripped_effective_count(corr, t)
+    # ~1.77 with these weights: only ~23% of family variance is group-specific, so the
+    # variance-weighted diversity is genuinely modest — the point is it sits ABOVE the clone
+    # bound (<1.5, next test) while the raw count cannot tell the two cases apart at all.
+    assert 1.5 <= stripped <= 8.0
+    assert mp_denoised_effective_count(corr, t) < 3.0  # the raw count still collapses
+
+
+@pytest.mark.finding("PF3")
+def test_market_mode_stripping_does_not_inflate_true_clones():
+    # Anti-gaming (this test caught the unweighted design's flaw): TRUE near-clones' independent
+    # but TINY idiosyncratic noise must NOT renormalize into fake diversity — the variance-share
+    # weighting keeps them ~1. Discrimination is the estimator's whole value: clones ≪ diverse.
+    rng = np.random.default_rng(29)
+    t = 4000
+    market = rng.standard_normal(t)
+    clones = np.vstack([0.9 * market + 0.05 * rng.standard_normal(t)
+                        for _ in range(30)])
+    stripped_clones = market_mode_stripped_effective_count(np.corrcoef(clones), t)
+    assert stripped_clones < 1.5
+
+
 @pytest.mark.finding("RT1")
 def test_participation_ratio_bounds():
     assert participation_ratio(np.array([1.0, 1.0, 1.0, 1.0])) == pytest.approx(4.0)
@@ -82,6 +119,34 @@ def test_campaign_search_size_is_raw_visited_count_with_run_floor():
     assert campaign_search_size(visited, n_run=9) == 9
     assert campaign_search_size({}, n_run=7) == 7
     assert campaign_search_size(None, n_run=7) == 7
+
+
+# ── PF6: the output-side firewall, proven not asserted ───────────────
+
+@pytest.mark.finding("PF6")
+def test_shuffle_invariance_performance_cannot_steer_the_multiplicity():
+    # THE firewall property: permuting every candidate's performance must leave the campaign
+    # multiplicity bit-identical — the N path has no input a Sharpe could travel through. This
+    # test trips if anyone ever threads a performance quantity into campaign_search_size.
+    import inspect
+    visited = {("sma_crossover", "AAPL"): {"c1", "c2"},
+               ("rsi_reversion", "MSFT"): {"c9"}}
+    baseline = campaign_search_size(visited, n_run=2)
+    # "shuffle performance": there is literally nothing to shuffle — prove it structurally:
+    sig = inspect.signature(campaign_search_size)
+    assert set(sig.parameters) == {"visited", "n_run"}          # counts only, ever
+    assert campaign_search_size(dict(reversed(list(visited.items()))), 2) == baseline
+
+
+@pytest.mark.finding("PF6")
+def test_coverage_store_schema_carries_no_performance_columns():
+    # Leak-audit: the persisted coverage rows must stay performance-free (the v1 review DROPPED
+    # best_sharpe/survived/died by design). A future migration re-adding them trips this.
+    from src.backend.ai.research.db_models import ResearchCoverageDB
+    cols = {c.name for c in ResearchCoverageDB.__table__.columns}
+    forbidden = {"sharpe", "best_sharpe", "returns", "pnl", "survived_count",
+                 "died_count", "win_rate", "total_return", "dsr"}
+    assert not (cols & forbidden), f"performance leaked into coverage store: {cols & forbidden}"
 
 
 # ── B4: the gate split (search breadth ≠ evidence thinness) ──────────

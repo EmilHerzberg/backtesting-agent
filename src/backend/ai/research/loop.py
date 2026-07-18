@@ -272,6 +272,14 @@ DECAY_SHARPE_FLOOR = 0.10    # M29: below this an in-regime Sharpe is too small 
 # D2 (locked owner decision): "validated" = risk-adjusted skill. The total-return-vs-fee-paying-buy-and-hold
 # comparison is computed + reported ALWAYS; it gates the OOS PASS only when this explicit toggle is on.
 OOS_TOTAL_RETURN_FLOOR = False
+# D1 (owner decision 2026-07-18, PF1-informed): the QUALITY floor on the OOS verdict — a significant,
+# buy-and-hold-beating edge below this annualized Sharpe is still not what the owner calls validated.
+# Configurable per run within [0.5, 1.0] (frontend knob); ONLY ever additive to the significance +
+# excess tests (it can never weaken them). The in-sample gate's strictness is NOT configurable — the
+# measured PF1 curve + the never-loosen invariant put stage-1 configurability behind FB4/soft-gate
+# (ranking + top-K rationing), recorded in coverage-v2-gate-config.json.
+OOS_MIN_SHARPE_DEFAULT = 0.9
+OOS_MIN_SHARPE_BAND = (0.5, 1.0)
 
 
 def _days(a: str, b: str) -> int:
@@ -539,7 +547,8 @@ class _PromotionToken:
 
 
 def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
-                 oos_days: float = 0, seed: int = 0) -> tuple[Any, Any]:
+                 oos_days: float = 0, seed: int = 0,
+                 min_sharpe: float = OOS_MIN_SHARPE_DEFAULT) -> tuple[Any, Any, dict]:
     """D5 / H3 + valconf/R5 + D2 — the OOS pass bar: frequency-aware, graded, RISK-ADJUSTED.
 
     Returns ``(OOSOutcome, ConfidenceAssessment, extras)``: the outcome is the control verdict the lockbox/
@@ -592,9 +601,29 @@ def _oos_verdict(m: dict, *, train_trades: int = 0, train_days: float = 0,
     excess_total_net = float(m.get("total_return", 0.0)) - bh_net
     if OOS_TOTAL_RETURN_FLOOR:
         passed = passed and excess_total_net > 0.0
+    # D1 quality floor (owner, PF1-informed; CI-AWARE per the Track-5 review): the observed OOS
+    # Sharpe is a NOISY point estimate (a true-1.0 edge measures <0.9 in ~44% of hold-outs), so a
+    # raw point comparison would terminally kill genuine edges on estimation noise. Semantics:
+    #   observed >= floor                        → floor satisfied (PASS if the skill arms passed);
+    #   observed <  floor, CI upper < floor      → statistically ESTABLISHED sub-bar → FAIL
+    #                                              (real, distinguishable verdict: floor_miss);
+    #   observed <  floor, bar not ruled out     → UNEVALUATED (retryable, budget preserved —
+    #                                              never a terminal kill on noise).
+    floor = float(min(max(min_sharpe, OOS_MIN_SHARPE_BAND[0]), OOS_MIN_SHARPE_BAND[1]))
+    obs_sharpe = float(m.get("sharpe_annual", 0.0))
     extras = {"excess_sharpe": round(excess_sharpe, 6),
               "excess_total_return_net": round(excess_total_net, 6),
-              "total_return_floor": bool(OOS_TOTAL_RETURN_FLOOR)}
+              "total_return_floor": bool(OOS_TOTAL_RETURN_FLOOR),
+              "min_sharpe_floor": floor,
+              "oos_sharpe": round(obs_sharpe, 4)}
+    if passed and obs_sharpe < floor:
+        ci_high = getattr(a, "ci_high", None)
+        if ci_high is not None and ci_high < floor:
+            extras["floor_miss"] = True     # skill exists, provably below the owner's bar
+            passed = False
+        else:
+            extras["floor_undetermined"] = True
+            return OOSOutcome.UNEVALUATED, a, extras
     return (OOSOutcome.PASS if passed else OOSOutcome.FAIL), a, extras
 
 
@@ -649,6 +678,7 @@ def _run_oos_lockbox(
     executor: ExecutorProtocol,
     emit: Any,
     lineage_tracker: LineageTracker | None = None,
+    oos_min_sharpe: float = OOS_MIN_SHARPE_DEFAULT,
 ) -> None:
     """Run OOS lockbox evaluation for a candidate. Budget-exempt: does NOT consume a run.
 
@@ -706,6 +736,7 @@ def _run_oos_lockbox(
             oos_days=_days(oos_start, oos_end),
             # valconf CI seeding: the OOS band is a reproducible property of this strategy's fingerprint.
             seed=_seed_from_hash(getattr(candidate, "strategy_hash", "") or ""),
+            min_sharpe=oos_min_sharpe,
         )
         captured["assessment"] = assessment
         captured["extras"] = extras
@@ -741,6 +772,7 @@ async def research_loop(
     enable_leakage_canary: bool = True,  # M22: run the leakage canary on survivors (re-runs on synthetics)
     coverage: Any = None,        # CoverageMap when coverage memory is on (sampling state)
     coverage_dsr: bool = False,  # coverage-v2 N-wire: size sr0 to the campaign visited count
+    oos_min_sharpe: float = OOS_MIN_SHARPE_DEFAULT,  # D1 quality floor (owner knob, 0.5-1.0)
 ) -> ResearchState:
     """Run the autonomous research loop until budget exhausted or goal met.
 
@@ -1231,7 +1263,7 @@ async def research_loop(
                 state.phase = ResearchPhase.OOS_EVALUATING
                 try:
                     _run_oos_lockbox(lockbox, candidate, spec, state, data_agent, executor, emit,
-                                     lineage_tracker)
+                                     lineage_tracker, oos_min_sharpe=oos_min_sharpe)
                 except Exception as exc:
                     logger.error("OOS lockbox error: %s", exc, exc_info=True)
 

@@ -23,7 +23,12 @@ from src.backend.ai.research.budgets import AgentBudgetController
 from src.backend.ai.research.critic import AdversarialCritic
 from src.backend.ai.research.executor import ResearchExecutor
 from src.backend.ai.research.gatekeeper import ResearchGatekeeper
-from src.backend.ai.research.loop import DirectorConfig, RuleBasedOrchestrator, research_loop
+from src.backend.ai.research.loop import (
+    OOS_MIN_SHARPE_DEFAULT as _OOS_MIN_SHARPE_DEFAULT,
+    DirectorConfig,
+    RuleBasedOrchestrator,
+    research_loop,
+)
 from src.backend.ai.research.report_generator import generate_final_report, llm_narrate_report
 from src.backend.ai.research.reporter import ResearchReport
 from src.backend.ai.research.state import Budget, GoalBrief, ResearchState
@@ -152,6 +157,9 @@ async def run_research(
     coverage_dsr: bool = False,       # coverage-v2 N-wire: size the DSR hurdle to the campaign visited count
     #                                   (requires coverage_memory; monotone-stricter; OFF by default — the
     #                                   enable gate is Tracks 1-5 + pre-flight PASS per the reconciled plan)
+    oos_min_sharpe: float | None = None,  # D1 (owner): OOS quality floor, clamped to [0.5, 1.0]; additive
+    #                                   to the significance + excess tests, never weakening them.
+    #                                   None → loop.OOS_MIN_SHARPE_DEFAULT (single source of truth)
     user_id: int | None = None,       # v1: coverage scope (per-user); None → shared scope "0"
 ) -> ResearchReport:
     """Run the full autonomous research pipeline.
@@ -342,6 +350,8 @@ async def run_research(
         enable_leakage_canary=enable_leakage_canary,
         coverage=coverage,
         coverage_dsr=bool(coverage_dsr and coverage is not None),
+        oos_min_sharpe=(oos_min_sharpe if oos_min_sharpe is not None
+                        else _OOS_MIN_SHARPE_DEFAULT),
     )
 
     # ── v1 coverage: flush newly-visited cells + stash spread telemetry for the report ──

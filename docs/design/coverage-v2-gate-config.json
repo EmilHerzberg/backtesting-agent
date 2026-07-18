@@ -1,0 +1,45 @@
+{
+ "pf5_freeze": {
+  "frozen_utc_date": "2026-07-18",
+  "never_loosen_invariant": "the significance machinery below is FROZEN; any change requires a deliberate re-freeze commit that updates this artifact AND the tamper test, never a runtime knob",
+  "dsr_gate": {
+   "gate_version": 2,
+   "threshold": 0.95,
+   "provisional_below": 20,
+   "v_null_inflation": 3.0,
+   "user_tunable": false
+  },
+  "oos_lockbox": {
+   "validate_t": 1.65,
+   "pass_rule": "per-trade significance AND excess Sharpe over buy-and-hold > 0 AND observed Sharpe >= quality floor",
+   "quality_floor_default": 0.9,
+   "quality_floor_band": [0.5, 1.0],
+   "quality_floor_semantics": "owner PRODUCT knob, additive-only (can never weaken the significance tests); CI-AWARE: observed < floor with the bar not ruled out -> UNEVALUATED (retryable, budget preserved — a true-1.0 edge measures <0.9 in ~44% of hold-outs); FAIL only when the CI upper bound rules the bar out (floor_miss, distinguishable from no-skill); per-run value recorded in the verdict extras",
+   "total_return_floor_default": false
+  },
+  "coverage_v2": {
+   "grid_version": "v3",
+   "coverage_dsr_default": false,
+   "search_size_rule": "max(raw campaign visited-cell count, N_run) - no correlation reduction sanctioned (B5); gate-level monotone floor"
+  },
+  "d1_resolution": {
+   "owner_decision": "hybrid, 2026-07-18",
+   "meaning": "the OOS lockbox RECORDS whether the observed hold-out Sharpe clears the owner's product bar (CI-aware, see quality_floor_semantics) — it is the honest arbiter for the 0.9-1.0 band but NOT a powered confirmer of it (a hold-out cannot reliably distinguish 0.7 from 0.9; PF1 shows the in-sample gate has zero power there at any N). The in-sample DSR gate stays maximally strict as the integrity filter and fresh-data rationing doorman. The actual 0.9-band SELECTION power arrives with FB4 top-K rationing.",
+   "stage1_configurability": "NOT a threshold slider (never-loosen invariant); arrives as top-K fresh-data rationing with FB4 campaign-wide OOS multiplicity control; owner band for the ranking cutoff recorded as in-sample ~2-3",
+   "evidence_power_curve_sha256_prefix": "f2cb94079b4658a7",
+   "evidence_hash_scope": "sha256 of the on-disk file bytes (script writes bytes, no newline translation); asserted by test_gate_config_freeze.py"
+  },
+  "pf_status": {
+   "PF1": "DONE - coverage-v2-power-curve.json (zero size at null everywhere; power in the D1 band = 0 in-sample at every N; vacuity is V-driven as predicted)",
+   "PF2_PF3": "PARTIAL - RT1 + market-mode-stripped estimators built + synthetic-validated (known-K with shared beta); gate-time measured reduction stays UNWIRED pending full validation on real visited families",
+   "PF4": "DONE - null-variance floor (Track 2)",
+   "PF5": "THIS ARTIFACT",
+   "PF6": "DONE - shuffle-invariance + schema leak-audit tests"
+  },
+  "provenance": {
+   "calibration_results_sha256_prefix": "68f6bbe9d38d8aab",
+   "panel_freeze_sha256_prefix": "f4772560",
+   "kseed": "10/10 dials stable across 5 panel draws"
+  }
+ }
+}

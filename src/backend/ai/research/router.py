@@ -83,6 +83,9 @@ class StartRunRequest(BaseModel):
     # runs explore UNVISITED parameter regions instead of re-testing near-duplicates.
     coverage_memory: bool = False
     coverage_dsr: bool = False   # coverage-v2 N-wire (needs coverage_memory; monotone-stricter)
+    # D1 owner knob: OOS quality floor. Bounds enforced at the API edge (422 on out-of-band) AND
+    # re-clamped inside the verdict; None → the loop's frozen default (single source of truth).
+    oos_min_sharpe: float | None = Field(default=None, ge=0.5, le=1.0)
 
     @model_validator(mode="after")
     def _validate_regime_window(self):
@@ -450,6 +453,7 @@ async def _run_and_track(rec: RunRecord, req: StartRunRequest) -> None:
             window_end=req.window_end,
             coverage_memory=req.coverage_memory,   # v1 cross-run coverage memory (robustness only)
             coverage_dsr=req.coverage_dsr,         # coverage-v2 N-wire (inert without coverage_memory)
+            oos_min_sharpe=req.oos_min_sharpe,     # D1 quality floor (clamped inside the verdict)
             user_id=rec.user_id,                    # coverage scope (per-user)
             on_start=_on_start,
             on_event=_on_event,
