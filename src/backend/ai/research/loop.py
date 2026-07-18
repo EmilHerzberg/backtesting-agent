@@ -739,6 +739,8 @@ async def research_loop(
     on_event: Any = None,  # callback for UI/logging events
     control: Any = None,  # callable() -> "run"|"pause"|"stop"|"stop_report" (A-9)
     enable_leakage_canary: bool = True,  # M22: run the leakage canary on survivors (re-runs on synthetics)
+    coverage: Any = None,        # CoverageMap when coverage memory is on (sampling state)
+    coverage_dsr: bool = False,  # coverage-v2 N-wire: size sr0 to the campaign visited count
 ) -> ResearchState:
     """Run the autonomous research loop until budget exhausted or goal met.
 
@@ -1003,9 +1005,17 @@ async def research_loop(
             _dsr_n_trials, sr_variance, _sr_defaulted, _trial_med_t = _dsr_registry_inputs(
                 _period_sharpe_values, _trial_lengths
             )
+            # coverage-v2 N-wire (B1/B2/B4/B5): when enabled, the sr0 hurdle sizes to the
+            # campaign's VISITED-cell count (raw = the conservative upper bound) floored at the
+            # run's own trial count — enabling can only TIGHTEN. Flag off → 0 → gate unchanged.
+            _search_size = 0
+            if coverage_dsr and coverage is not None:
+                from src.backend.ai.research.effective_n import campaign_search_size
+                _search_size = campaign_search_size(
+                    getattr(coverage, "visited", {}) or {}, _dsr_n_trials)
             gatekeeper.update_registry_stats(
                 _dsr_n_trials, sr_variance, variance_defaulted=_sr_defaulted,
-                trial_median_t=_trial_med_t,
+                trial_median_t=_trial_med_t, search_size=_search_size,
             )
             # M22: a closure that re-runs THIS candidate's spec on arbitrary OHLCV — the leakage
             # canary runs it on zero-drift synthetics (only reached by survivors of the cheaper gates).

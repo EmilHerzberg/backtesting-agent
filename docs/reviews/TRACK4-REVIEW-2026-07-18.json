@@ -1,0 +1,69 @@
+{
+ "lenses": [
+  {
+   "lens": "statistics",
+   "result": {
+    "findings": [
+     {
+      "severity": "high",
+      "title": "Monotone-stricter (B5) contract is not enforced at the gate \u2014 only in the caller",
+      "code_ref": "src/backend/backtesting/gates/deflated_sharpe.py:139",
+      "detail": "n_search = int(getattr(ctx,'search_size',0) or 0) or n_trials has no max(n_search, n_trials). The 'enabling can only TIGHTEN' guarantee (asserted in the adjacent B4 comment and in COVERAGE-V2-RECONCILED-PLAN \u00a72a 'N_used = max(N_eff, N_run)') lives ENTIRELY in campaign_search_size's max(n_campaign, n_run) in effective_n.py:92. The gate trusts the caller. If any search_size < n_trials_global ever reaches ctx, the DSR hurdle drops below the per-run status quo (smaller N -> smaller sr0 -> larger DSR -> looser) silently. Today the sole caller (loop.py:1014, n_run=_dsr_n_trials, which is exactly n_trials_global set in the same update_registry_stats call) floors correctly, so there is NO live loosening. But the enforcement locus should be the gate \u2014 the place that claims the guarantee and the place the future N_eff reduction (max(N_eff, N_run)) will also feed. Fix: n_search = max(int(getattr(ctx,'search_size',0) or 0), n_trials). Verified: sr0(N,V) is monotone increasing in N for N>=2, so any n_search<n_trials strictly loosens."
+     },
+     {
+      "severity": "high",
+      "title": "RT1 estimator collapses on the beta-dominated families it will be wired to; PF3 only tests the easy independent-factor regime",
+      "code_ref": "src/backend/ai/research/effective_n.py:47 / tests/unit/ai/research/test_effective_n.py:29",
+      "detail": "Measured directly on the v3 shards: the real sweep families are single-market-mode dominated (off-diagonal mean corr sma=0.85, macd=0.91, bollinger=0.76, rsi=0.72). mp_denoised_effective_count returns Meff ~1.1-1.65 for the full families, and ~1.6 even for a MAXIMIN-spread k-cell subset (measured: k=5->1.75, k=10->1.63, k=20->1.59) \u2014 because the MP clip (sigma^2=1, lam_plus=(1+sqrt(n/T))^2 ~ 1.24) folds the entire 0.55-0.95 bulk into the market mode. Consequence for the FUTURE wire: when the 'measured reduction' N_eff = max(Meff, N_run) is enabled in the PF phase, Meff ~1.4-3 << N_run for essentially every campaign, so N_used = N_run and cross-run multiplicity accumulation is NULLIFIED \u2014 the exact loosening back to per-run that coverage-v2 exists to prevent. This is NOT a live loosening today (the estimator is offline-only; the live path uses raw counts \u2014 confirmed by grep: campaign_search_size is the only wired function). But PF3's known-K synthetic (test_effective_n.py:29, _clone_family_corr with rng.standard_normal PER FACTOR = independent factors) never exercises the single-dominant-factor / q=n/T-with-shared-underlying regime the real families exhibit, so 'PF3-validated' does not establish the estimator is usable for its stated purpose. Flag before the PF-phase wire relies on it."
+     },
+     {
+      "severity": "medium",
+      "title": "Frozen p75 aggregate is mislabeled 'conservative' \u2014 it under-covers the upper quartile (anti-conservative direction)",
+      "code_ref": "scripts/derive_family_effective_counts.py:37,91-93,110 / docs/design/calibration-v3-effective-counts.json:3",
+      "detail": "frozen_ratio = p75 of Meff/n across assets, documented as 'the CONSERVATIVE (largest-within-tolerance) aggregate' and 'larger ratio = less N-reduction = stricter gate'. The ratio is a MULTIPLIER on N to get N_eff; for the ~25% of assets whose true ratio exceeds p75, the frozen value is SMALLER than their true ratio -> N_eff understated -> over-reduction -> looser than that asset's true multiplicity. For a quantity whose safe direction is 'never under-reduce', the conservative aggregate is the MAX (or >=p90), or 1.0 \u2014 not p75. p75 is merely the most conservative of {p25,median,p75}, which the docstring conflates with 'conservative'. This is a frozen write-once artifact (refuses overwrite, derive script:59) feeding a PF-phase decision, so the imprecise safety-direction label should be corrected at commit even though frozen_ratio is telemetry-only today (unused in the live gate path \u2014 confirmed by grep; effective_n.py:76 explicitly documents it as 'NOT applied to the gate's N in the v1 wire')."
+     },
+     {
+      "severity": "low",
+      "title": "Adjudication of the raw-count decision: sound and never-loosening; over-conservative but log-damped; inert on run 1 by design",
+      "code_ref": "src/backend/ai/research/effective_n.py:83-92",
+      "detail": "VERDICT on the key decision: defensible, not a blocker. (1) Never loosens: participation-ratio Meff <= matrix dim = raw cell count always, so raw >= true N_eff; combined with max(., n_run) and the same-call floor, n_search >= n_trials_global always. (2) The 'sweep ratio (~0.03) would over-reduce spread-out sets' argument is empirically SOUND: corr decays with grid distance (measured 0.97@dist0 -> 0.60@dist1.0), so spread cells are more independent than sweep neighbors; applying 0.03 to them would over-reduce. (3) BUT the raw count is enormously slack: within one family even maximin-spread subsets have Meff ~1.6 (raw overstates 2.8x-12.6x for k=5..20), because all cells of one (template,asset) share the asset beta (floor corr ~0.55 even at max distance). (4) Slack impact is bounded: sr0 ~ sqrt(2 ln N), so a 6x N over-count moves the hurdle only ~10-14% at 10k-170k campaign sizes \u2014 over-strict, not inert, and B5-acceptable. (5) By construction the wire is INERT on run 1 (distinct visited cells <= executed trials within a single run, so max(N_campaign,N_run)=N_run until persisted cross-run coverage accumulates from run 2+) \u2014 correct per the cross-run-accumulation intent, worth stating in the plan so single-run robustness runs aren't expected to tighten."
+     }
+    ],
+    "summary": "The wire has NO live loosening path and the flag-OFF path is byte-identical (monotonicity of sr0 in N + verified test). The central raw-count-vs-measured-reduction decision is ADJUDICATED SOUND and not a blocker: I confirmed numerically against the v3 shards that (a) correlation decays with grid distance (0.97->0.60) yet floors at ~0.55 for the most-distant maximin cells (beta-dominated), so applying the ~0.03 sweep ratio to spread-out sets would indeed over-reduce (a loosening the plan forbids); (b) raw count is a valid conservative upper bound (Meff <= N always) but is 2.8x-12.6x slack within a family, which sr0's sqrt(2 ln N) scaling damps to only ~10-14% hurdle inflation at realistic campaign sizes \u2014 over-strict, B5-acceptable. Two HIGH items to fix before commit: (1) the 'enabling can only tighten' contract is enforced only in campaign_search_size, not at the gate \u2014 deflated_sharpe.py:139 should re-floor n_search at n_trials (defense-in-depth; no current violator but the enforcement belongs where the guarantee is claimed); (2) the RT1 estimator collapses to Meff~1.4 on the real beta-dominated families and PF3 only tests independent-factor synthetics, so 'PF3-validated' does not establish it can support the future measured-reduction wire (which would nullify cross-run accumulation = a loosening) \u2014 offline-only today so not a live risk, but flag before relying on it. One MEDIUM: the frozen p75 aggregate is mislabeled 'conservative' (it under-covers the upper quartile, the anti-conservative direction) in a write-once artifact; telemetry-only today. Full effective_n test file passes (7/7)."
+   }
+  },
+  {
+   "lens": "wire",
+   "result": {
+    "findings": [
+     {
+      "severity": "low",
+      "title": "OFF path is not strictly byte-identical: gate details now always carry search_size",
+      "code_ref": "src/backend/backtesting/gates/deflated_sharpe.py:139,154",
+      "detail": "With coverage_dsr=False (or coverage=None) the DSR VERDICT is byte-identical to today \u2014 n_search = `int(getattr(ctx,'search_size',0) or 0) or n_trials` = n_trials, so deflated_sharpe() gets the same n_trials as before and returns the same value (verified numerically: search_size=0 dsr 0.738805 == search_size=50 dsr 0.738805). However v_fields now unconditionally adds `search_size=n_search` (=n_trials in the OFF path), so the persisted gate_details_json / in-memory details dict gains a key that did not exist before. I traced every consumer of gate details \u2014 quality.py:_gate reads only dsr/n_trials/sr_variance/provisional/sr_variance_defaulted; loop.py:1136/1148/1155 read only 'reason'; router.py:898 passes details through a dict[str,Any] pydantic model; persistence.py stores it as opaque JSON. None branch on search_size, so the change is behaviourally inert \u2014 but the 'byte-identical end-to-end' claim is technically violated for the persisted details stream, and any future snapshot/schema check on DSR details keys would see the new field. Not a loosening.",
+      "category": "wire-semantics"
+     },
+     {
+      "severity": "low",
+      "title": "B2 campaign scope is cross-template per asset, a superset of the run's template pool",
+      "code_ref": "src/backend/ai/research/coverage.py:367-372; src/backend/ai/research/effective_n.py:91",
+      "detail": "campaign_search_size sums len(cells) over ALL (template,asset) keys in CoverageMap.visited. load_coverage filters persisted rows by security_id.in_(assets) (the run's asset pool) but does NOT filter by template_id, so prior-run cells for templates OUTSIDE this run's allowed-template pool (but on a pool asset) are loaded and counted. Asset scope is correct (visited keys only ever hold pool assets \u2014 strategist marks state.current_asset). The template over-inclusion makes N a conservative SUPERSET of the single-run template\u00d7asset pool: direction is over-strict, so the monotone-stricter contract is preserved and it is NOT a loosening. It is a power cost (may over-deflate real edges) and a deviation from a strict 'this run's selection set' reading of B2. Worth confirming this cross-template-per-asset campaign scope is the pre-registered selection set (it is arguably the correct multiplicity \u2014 you did search those templates). Flag is OFF by default and pre-flight-gated, so low.",
+      "category": "wire-scope"
+     },
+     {
+      "severity": "low",
+      "title": "Cosmetic: n_trials<2 early-return omits search_size while all other paths include it",
+      "code_ref": "src/backend/backtesting/gates/deflated_sharpe.py:99-106",
+      "detail": "The `if n_trials < 2` provisional-pass returns details without a search_size key, whereas the provisional/pass/fail paths built from v_fields all carry it. Purely a details-schema inconsistency (that early path is a provisional pass regardless), no behavioural effect, but it means a details consumer cannot assume search_size is always present. Cosmetic.",
+      "category": "consistency"
+     }
+    ],
+    "summary": "No blocker and no high found. The three core safety contracts hold under adversarial probing. (1) MONOTONE-STRICTER: n_search = max(n_campaign, n_run) with n_run = _dsr_n_trials, which is the SAME variable that becomes ctx.n_trials_global (loop.py:1005/1014/1016 -> gatekeeper sets self.n_trials_global = n_trials and self.search_size, gatekeeper.py:128/136), so n_search >= n_trials always; deflated_sharpe is monotone decreasing in n_trials (sr0 grows with N), verified numerically (dsr 0.7388->0.4744->0.019->0.00009->0 as search_size 50->172831). No path yields n_search < n_trials, so enabling can only TIGHTEN. Empty visited floors to n_run; recomputed per-iteration so never stale-loose. (2) OFF PATH: coverage_dsr=False or coverage=None -> _search_size=0 -> ctx.search_size=0 -> n_search=n_trials -> DSR verdict byte-identical (verified). coverage is None outside robustness mode and without coverage_memory (run.py:272-275), and run.py:344 gates coverage_dsr on `coverage is not None`, so it is inert without coverage_memory and in regime mode. Provisional/auto-pass valves still key on executed n_trials (is_provisional uses n_trials, not n_search; test_valves_keep_the_executed_count confirms a 1-trial provisional pass survives a 100k search). (3) FIREWALL (PF6): the only symbol the gate path imports from effective_n is campaign_search_size, whose inputs are cell counts (visited) + n_run (a trial count) \u2014 no performance quantity; mp_denoised_effective_count/frozen_ratio/the frozen JSON artifact are wired ONLY into scripts/derive_family_effective_counts.py (pre-flight), never the gate. The emitted `search_size` is a count, not selection-steerable. (c) The current candidate's own cell IS counted: strategist.mark() fires at propose time (strategist.py:195/484) before executor+gate eval. The 3 low findings are safe-direction/inert (additive telemetry key in OFF-path details, cross-template campaign scope that only ever over-strictens, and a cosmetic details-schema gap). Full suite (844) + new test_effective_n.py (7) pass."
+   }
+  },
+  {
+   "lens": "contract",
+   "result": null
+  }
+ ]
+}

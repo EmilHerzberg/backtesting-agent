@@ -149,6 +149,9 @@ async def run_research(
     window_start: str | None = None,  # P1: regime window start (ignored in robustness)
     window_end: str | None = None,    # P1: regime window end
     coverage_memory: bool = False,    # v1: cross-run space-filling coverage memory (robustness only); OFF by default
+    coverage_dsr: bool = False,       # coverage-v2 N-wire: size the DSR hurdle to the campaign visited count
+    #                                   (requires coverage_memory; monotone-stricter; OFF by default — the
+    #                                   enable gate is Tracks 1-5 + pre-flight PASS per the reconciled plan)
     user_id: int | None = None,       # v1: coverage scope (per-user); None → shared scope "0"
 ) -> ResearchReport:
     """Run the full autonomous research pipeline.
@@ -337,6 +340,8 @@ async def run_research(
         on_event=on_event,
         control=control,
         enable_leakage_canary=enable_leakage_canary,
+        coverage=coverage,
+        coverage_dsr=bool(coverage_dsr and coverage is not None),
     )
 
     # ── v1 coverage: flush newly-visited cells + stash spread telemetry for the report ──

@@ -72,6 +72,10 @@ class GateContext:
     trial_sr_variance_defaulted: bool = False  # M24: variance is a floored default, not a measurement
     trial_median_t: float = 0.0  # PF4: median trial return-series length (0 = unknown) — the
     #                              null-variance floor must sit on the TRIALS' clock too
+    search_size: int = 0  # B4 (coverage-v2): campaign multiplicity size for sr0 ONLY (0 = unset →
+    #                       n_trials_global). The provisional/auto-pass valves ALWAYS use the
+    #                       realized executed-trial count — evidence thinness and search breadth
+    #                       are different questions and must not share one number.
     run_strategy_fn: Any = None                # M22: re-run the candidate spec on arbitrary OHLCV (leakage canary)
 
 

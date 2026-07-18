@@ -1,0 +1,56 @@
+{
+ "method": {
+  "beta_mode_caveat": "families are market-mode dominated (off-diag corr floors ~0.55 even at max grid distance); the MP clip folds the bulk into that mode, so Meff ~1.1-1.75 regardless of spread. The PF2/PF3 phase must count independence on the market-mode-stripped structure before any measured reduction may reach the gate's N.",
+  "direction_note": "REFERENCE VALUES, not a sanctioned reduction: for a reduction ratio the safe aggregate is max/1.0, and p75 under-covers the top quartile \u2014 recorded as the sweep-family LOWER bound alongside ratio_max. The v1 wire applies NO reduction (raw visited count).",
+  "estimator": "participation ratio (sum(ev))^2/sum(ev^2) on the MP-clipped (sigma^2=1, trace-preserving) correlation spectrum; q = n_settings/(bars_inwindow-1)",
+  "min_settings": 8,
+  "panel_sha256": "adab42cd04c22c4e7a8b7a438cb4ec01f9b494dbc94b217f22b939c098fa6ef7",
+  "reference_quantile": 75
+ },
+ "templates": {
+  "bollinger_breakout": {
+   "meff_median": 1.588,
+   "meff_p25": 1.468,
+   "meff_p75": 1.718,
+   "n_assets": 211,
+   "n_settings_median": 39.0,
+   "ratio_max": 0.0563,
+   "ratio_median": 0.0407,
+   "ratio_p25": 0.0376,
+   "reference_ratio_p75": 0.044
+  },
+  "macd_cross": {
+   "meff_median": 1.11,
+   "meff_p25": 1.094,
+   "meff_p75": 1.126,
+   "n_assets": 211,
+   "n_settings_median": 38.0,
+   "ratio_max": 0.038,
+   "ratio_median": 0.0292,
+   "ratio_p25": 0.0288,
+   "reference_ratio_p75": 0.0296
+  },
+  "rsi_reversion": {
+   "meff_median": 1.654,
+   "meff_p25": 1.474,
+   "meff_p75": 1.857,
+   "n_assets": 211,
+   "n_settings_median": 53.0,
+   "ratio_max": 0.1825,
+   "ratio_median": 0.0314,
+   "ratio_p25": 0.028,
+   "reference_ratio_p75": 0.0355
+  },
+  "sma_crossover": {
+   "meff_median": 1.481,
+   "meff_p25": 1.425,
+   "meff_p75": 1.611,
+   "n_assets": 211,
+   "n_settings_median": 55.0,
+   "ratio_max": 0.1523,
+   "ratio_median": 0.0269,
+   "ratio_p25": 0.026,
+   "reference_ratio_p75": 0.0293
+  }
+ }
+}

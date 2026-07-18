@@ -115,10 +115,11 @@ class ResearchGatekeeper:
         self.trial_sr_variance = trial_sr_variance
         self.trial_sr_variance_defaulted = False
         self.trial_median_t = 0.0
+        self.search_size = 0
 
     def update_registry_stats(
         self, n_trials: int, sr_variance: float, *, variance_defaulted: bool = False,
-        trial_median_t: float = 0.0,
+        trial_median_t: float = 0.0, search_size: int = 0,
     ) -> None:
         """Update DSR inputs from the registry (M24: carry an explicit defaulted flag rather than
         letting downstream sniff the magic floor value). PF4: a MEASURED 0.0 (perfectly clustered
@@ -132,6 +133,7 @@ class ResearchGatekeeper:
             self.trial_sr_variance = sr_variance
             self.trial_sr_variance_defaulted = False
         self.trial_median_t = float(trial_median_t or 0.0)
+        self.search_size = int(search_size or 0)   # B4: sr0-only multiplicity (0 = per-run)
 
     def evaluate(
         self,
@@ -182,6 +184,7 @@ class ResearchGatekeeper:
             trial_sr_variance=self.trial_sr_variance,
             trial_sr_variance_defaulted=self.trial_sr_variance_defaulted,
             trial_median_t=self.trial_median_t,
+            search_size=self.search_size,
             run_strategy_fn=context.get("run_strategy_fn"),          # M22: supplied per-candidate by the loop
         )
 

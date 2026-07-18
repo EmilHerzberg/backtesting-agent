@@ -133,13 +133,23 @@ class DeflatedSharpeGate(Gate):
         v_null_floored = sr_variance < v_null
         sr_variance_used = max(sr_variance, v_null)
 
-        dsr = deflated_sharpe(returns, n_trials, sr_variance_used)
+        # B4 (coverage-v2): the expected-max hurdle sizes to the SEARCH (campaign multiplicity
+        # when the wire supplies it), while the provisional/auto-pass valves above keep keying on
+        # the realized executed-trial count — search breadth is not evidence thinness.
+        # Review fix (B5 defense-in-depth): the monotone-stricter guarantee is enforced HERE, at
+        # the gate that claims it — a supplied search_size can never sit below the run's own
+        # trial count, whatever a (future) caller feeds in.
+        _supplied = int(getattr(ctx, "search_size", 0) or 0)
+        n_search = max(_supplied, n_trials) if _supplied else n_trials
+
+        dsr = deflated_sharpe(returns, n_search, sr_variance_used)
 
         # A defaulted (unmeasured) variance can never be a firm PASS/FAIL — it stays provisional.
         is_provisional = n_trials < self.PROVISIONAL_BELOW or sr_variance_defaulted
 
-        # MON2 seed: report which variance actually set the bar, so a too-high hurdle is
-        # attributable to its true lever (V/T), never silently absorbed.
+        # MON2 seed: report which levers actually set the bar (V/T/N), so a too-high hurdle is
+        # attributable to its true cause, never silently absorbed. search_size is reported only
+        # when the wire supplied one — the flag-OFF details stay byte-identical to today.
         v_fields = dict(
             sr_variance=sr_variance_used,
             sr_variance_measured=sr_variance,
@@ -147,6 +157,8 @@ class DeflatedSharpeGate(Gate):
             v_null_floored=v_null_floored,
             sr_variance_defaulted=sr_variance_defaulted,
         )
+        if _supplied:
+            v_fields["search_size"] = n_search
 
         if is_provisional:
             why = (
