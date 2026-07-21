@@ -18,6 +18,20 @@ from src.backend.backtesting.gates.pipeline import (
 )
 
 
+def expected_max_sharpe(n_trials: int, variance: float) -> float:
+    """sr0: the expected maximum per-period Sharpe among n_trials zero-skill
+    trials with estimator variance ``variance`` (Bailey & López de Prado) —
+    exposed for MON2 telemetry and the power canary."""
+    if n_trials < 2 or variance <= 0:
+        return 0.0
+    gamma = 0.5772156649015329
+    z = scipy.stats.norm.ppf
+    return float(math.sqrt(variance) * (
+        (1 - gamma) * z(1 - 1.0 / n_trials)
+        + gamma * z(1 - 1.0 / (n_trials * math.e))
+    ))
+
+
 def deflated_sharpe(
     returns: np.ndarray,
     n_trials: int,
@@ -83,6 +97,20 @@ class DeflatedSharpeGate(Gate):
     # (the mandatory PF4 check sr0(V_used) ≥ sr0(V_measured) holds identically; asserted in tests).
     V_NULL_INFLATION = 3.0
 
+    @classmethod
+    def null_variance_floor(cls, t_cand: int, exposure: float = 1.0,
+                            t_trials: float = 0.0) -> float:
+        """The PF4 conservative null-variance floor — the SINGLE implementation
+        shared by check() and the MON1 power canary (review fix: the canary had
+        re-derived it inline; a later restructure would have silently broken
+        its conservativeness argument with no test failing)."""
+        t_cand = max(int(t_cand), 1)
+        e = exposure if 0.0 < exposure <= 1.0 else 1.0
+        inv_null = 1.0 / max(e * t_cand, 1.0)
+        if t_trials and t_trials > 1:
+            inv_null = max(inv_null, 1.0 / (float(t_trials) - 1.0))
+        return cls.V_NULL_INFLATION * inv_null
+
     def check(self, ctx: GateContext) -> GateResult:
         n_trials = ctx.n_trials_global
         sr_variance = ctx.trial_sr_variance
@@ -120,16 +148,12 @@ class DeflatedSharpeGate(Gate):
         # The floor takes the max of both nulls (the stricter one governs). Staged scope: this is
         # the per-run floor mechanism; the frozen-grid pre-flight curve (and the replace-vs-floor
         # decision it informs) lands with the PF gates (PF1/PF5), per the reconciled plan.
-        t_cand = len(returns) - 1
         exposure = float(ctx.metrics.get("exposure_time", 0.0) or 0.0)
         if exposure > 1.0:                    # percent convention → fraction
             exposure = exposure / 100.0
-        n_eff_cand = max((exposure if 0.0 < exposure <= 1.0 else 1.0) * t_cand, 1.0)
-        inv_null = 1.0 / n_eff_cand
-        t_trials = float(getattr(ctx, "trial_median_t", 0.0) or 0.0)
-        if t_trials > 1:
-            inv_null = max(inv_null, 1.0 / (t_trials - 1.0))
-        v_null = self.V_NULL_INFLATION * inv_null
+        v_null = self.null_variance_floor(
+            len(returns) - 1, exposure=exposure,
+            t_trials=float(getattr(ctx, "trial_median_t", 0.0) or 0.0))
         v_null_floored = sr_variance < v_null
         sr_variance_used = max(sr_variance, v_null)
 
@@ -147,15 +171,22 @@ class DeflatedSharpeGate(Gate):
         # A defaulted (unmeasured) variance can never be a firm PASS/FAIL — it stays provisional.
         is_provisional = n_trials < self.PROVISIONAL_BELOW or sr_variance_defaulted
 
-        # MON2 seed: report which levers actually set the bar (V/T/N), so a too-high hurdle is
-        # attributable to its true cause, never silently absorbed. search_size is reported only
-        # when the wire supplied one — the flag-OFF details stay byte-identical to today.
+        # MON2: report which levers actually set the bar (V/T/N), so a too-high hurdle is
+        # attributable to its true cause, never silently absorbed. sr0_annual is the plain-
+        # language number ("the best of N junk trials looks like THIS much Sharpe here");
+        # min_pass_sharpe_annual ≈ the observed Sharpe a candidate needs for a firm PASS.
+        _sr0 = expected_max_sharpe(n_search, sr_variance_used)
         v_fields = dict(
             sr_variance=sr_variance_used,
             sr_variance_measured=sr_variance,
             v_null=v_null,
             v_null_floored=v_null_floored,
             sr_variance_defaulted=sr_variance_defaulted,
+            sr0_annual=round(_sr0 * math.sqrt(252), 3),
+            min_pass_sharpe_annual=round(
+                (_sr0 + 1.645 / math.sqrt(max(len(returns) - 1, 1))) * math.sqrt(252), 3),
+            binding_lever=("V_floor" if v_null_floored else
+                           "V_defaulted" if sr_variance_defaulted else "V_measured"),
         )
         if _supplied:
             v_fields["search_size"] = n_search

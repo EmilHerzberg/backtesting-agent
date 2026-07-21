@@ -213,6 +213,9 @@ class OOSResponse(BaseModel):
     outcome: str  # PASS | FAIL | PENDING
     lineage_id: str = ""
     evaluated_at: str = ""
+    # D2: the buy-and-hold comparison, display evidence beside the verdict
+    excess_sharpe: float | None = None
+    excess_total_return_net: float | None = None
 
 
 class FailureItem(BaseModel):
@@ -883,6 +886,11 @@ async def _candidate_detail_or_404(goal_id: str, strategy_hash: str, user_id: in
                     "oos_outcome": o.outcome if o else "PENDING",
                     "oos_lineage_id": o.lineage_id if o else c.__dict__.get("lineage_id", ""),
                     "oos_evaluated_at": o.evaluated_at if o else "",
+                    # D2: the buy-and-hold comparison (excess Sharpe gates the PASS; the fee-net
+                    # total-return delta is the "would just holding have made more?" check)
+                    "oos_excess_sharpe": getattr(o, "excess_sharpe", None) if o else None,
+                    "oos_excess_total_return_net":
+                        getattr(o, "excess_total_return_net", None) if o else None,
                 }
     detail = await persistence.load_candidate_detail(goal_id, strategy_hash, user_id)
     if detail is None:
@@ -942,6 +950,8 @@ async def get_candidate_oos(
         outcome=detail.get("oos_outcome", "PENDING"),
         lineage_id=detail.get("oos_lineage_id", detail.get("lineage_id", "")),
         evaluated_at=detail.get("oos_evaluated_at", ""),
+        excess_sharpe=detail.get("oos_excess_sharpe"),
+        excess_total_return_net=detail.get("oos_excess_total_return_net"),
     )
 
 

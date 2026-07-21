@@ -86,6 +86,25 @@ export default function CandidateDossierPage({
                 {oos.lineage_id?.slice(0, 8)}
               </div>
             )}
+            {/* D2: the buy-and-hold reality check — the comparison bar */}
+            {oos?.excess_sharpe != null && (
+              <div className="text-[11px] mt-2 flex gap-4">
+                <span>
+                  vs buy &amp; hold (risk-adjusted):{" "}
+                  <span className={`font-mono font-semibold ${oos.excess_sharpe >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {oos.excess_sharpe >= 0 ? "+" : ""}{oos.excess_sharpe.toFixed(2)} Sharpe
+                  </span>
+                </span>
+                {oos.excess_total_return_net != null && (
+                  <span>
+                    total return vs fee-paying hold:{" "}
+                    <span className={`font-mono font-semibold ${oos.excess_total_return_net >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {oos.excess_total_return_net >= 0 ? "+" : ""}{(oos.excess_total_return_net * 100).toFixed(1)}%
+                    </span>
+                  </span>
+                )}
+              </div>
+            )}
             {oosOutcome === "PENDING" && (
               <div className="text-[11px] opacity-70 mt-1">Not yet promoted to the OOS lockbox.</div>
             )}

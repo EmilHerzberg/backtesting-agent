@@ -53,6 +53,16 @@ def test_fb4_constants_match_the_freeze():
     assert OOSLockboxService.campaign_adjusted_t(49) == OOSLockboxService.campaign_adjusted_t(0)
 
 
+def test_mon1_canary_constants_match_the_freeze():
+    from src.backend.backtesting.gates import power_canary as pc
+    f = CFG["mon1_power_canary"]
+    assert pc.CANARY_EDGE == f["reference_edge"]
+    assert pc.CANARY_HEALTH_EDGE == f["health_edge"]
+    assert pc.CANARY_REPS == f["reps"]
+    assert pc.CANARY_SEED == f["seed"]
+    assert pc.CANARY_POWER_FLOOR == f["power_floor"]
+
+
 def test_power_curve_evidence_hash_matches_the_freeze():
     # The provenance link is verifiable, not decorative: re-hash the on-disk evidence file.
     import hashlib

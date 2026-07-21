@@ -27,9 +27,20 @@
   },
   "rt2_advisory_stage1": {
    "soft_dsr_default": false,
-   "status": "PLUMBED BUT SEQUENCING-BLOCKED: a soft_dsr request is REFUSED (ValueError) until the MON1 power canary (Track 6) exists and proves the DSR gate vacuous — the spec's third precondition alongside OOS-on and FB4-active",
-   "guard": "when unblocked: honored ONLY in robustness mode with the OOS lockbox enabled; regime mode keeps DSR HARD regardless",
-   "effect": "DSR FAIL -> recorded weakness (could-be-luck label), candidate proceeds to the FB4-controlled lockbox; all other hard gates unchanged"
+   "status": "ACTIVE, MON1-CONDITIONED (Track 6): a soft_dsr request runs the power canary at the run's operating point (evaluated at the PF4 variance FLOOR = the gate's most generous bar, so 'vacuous' is proven for every possible measured V); it activates only on a healthy canary proving vacuity, else refuses loudly",
+   "guard": "robustness mode + OOS lockbox enabled + canary-proven vacuity (all three); regime mode keeps DSR HARD regardless",
+   "effect": "DSR FAIL -> recorded weakness (could-be-luck label), candidate proceeds to the FB4-controlled lockbox; all other hard gates unchanged; the canary evidence is emitted (mon1_canary event) and surfaced as the run-page banner"
+  },
+  "mon1_power_canary": {
+   "reference_edge": 1.0,
+   "health_edge": 6.0,
+   "reps": 200,
+   "seed": 20260721,
+   "power_floor": 0.5,
+   "variance": "the SHARED PF4 floor (DeflatedSharpeGate.null_variance_floor — one implementation, cannot drift)",
+   "n_reference": "the firm-verdict minimum (PROVISIONAL_BELOW=20): power is monotone-decreasing in N, so the smallest firm N gives the MAX power any real firm verdict can have — the vacuity claim is a true upper-bound proof over every reachable (V, N)",
+   "health_probe": "fixed canonical point (T=2265, N=20, edge 6.0), decoupled from the run's window — distinguishes 'machinery broken' from 'window small'",
+   "owner_note": "at realistic operating points the canary ALWAYS finds the reference band vacuous (PF1 established this offline) — so today the RT2 activation is effectively on-when-requested; the canary's ongoing value is as evidence, telemetry, and a TRIPWIRE that blocks softening if a future regime change (bigger T, restructured V) ever gives the in-sample gate real power in the band"
   },
   "coverage_v2": {
    "grid_version": "v3",

@@ -38,6 +38,39 @@ from src.backend.backtesting.validation.lineage import LineageTracker
 logger = logging.getLogger(__name__)
 
 
+def _resolve_soft_dsr(requested: bool, *, enable_oos: bool, mode: str,
+                      window_start: str, window_end: str,
+                      max_runs: int) -> tuple[bool, dict | None]:
+    """RT2 activation guard (MON1-conditioned). Returns (active, canary_evidence).
+
+    Raises ValueError when the request violates a precondition — refusal is
+    always loud, never a silent downgrade. Evidence is returned (and emitted)
+    whenever the canary ran, whichever way it decided.
+    """
+    if not requested:
+        return False, None
+    if not (enable_oos and mode == "robustness"):
+        raise ValueError(
+            "soft_dsr requires robustness mode with the OOS lockbox enabled — "
+            "softening the DSR without its FB4-controlled backstop is a pure loosening."
+        )
+    from datetime import date as _date
+
+    from src.backend.backtesting.gates.power_canary import gate_vacuity_canary
+    days = max((_date.fromisoformat(window_end) - _date.fromisoformat(window_start)).days, 45)
+    evidence = gate_vacuity_canary(t_bars=int(days * 252 / 365), n_trials=max(int(max_runs), 2))
+    if not evidence["canary_healthy"]:
+        raise ValueError(f"soft_dsr refused: the MON1 canary self-check failed — no honest "
+                         f"vacuity claim is possible ({evidence}).")
+    if not evidence["vacuous"]:
+        raise ValueError(
+            "soft_dsr refused: the MON1 canary shows the DSR gate has REAL power at the "
+            f"reference edge at this operating point ({evidence}) — softening it would "
+            "discard a working filter, not a vacuous one."
+        )
+    return True, evidence
+
+
 _OHLCV = ["Open", "High", "Low", "Close", "Volume"]
 
 
@@ -305,17 +338,16 @@ async def run_research(
     # not a bare commission — otherwise AI-discovered strategies are graded ~30% cheaper than documented.
     from src.backend.backtesting.costs.model import effective_commission_pct
     executor = ResearchExecutor(commission=effective_commission_pct(commission_pct, spread_bps, slippage_bps))
-    # RT2 sequencing guard (review fix): the spec softens DSR only when (a) OOS is on, (b) FB4
-    # multiplicity control is active AND (c) the MON1 power canary has PROVEN the gate vacuous.
-    # MON1 is not built yet (Track 6), so a soft_dsr request is REFUSED loudly — the mechanism is
-    # plumbed and tested, but cannot activate before its preconditions exist.
-    if soft_dsr:
-        raise ValueError(
-            "soft_dsr is sequencing-blocked: the MON1 power canary (Track 6) must exist and "
-            "prove the DSR gate vacuous before the advisory stage-1 may activate "
-            "(COVERAGE-GATE-SAFETY-MECHANISMS.md RT2 preconditions)."
-        )
-    gatekeeper = ResearchGatekeeper(rigor=rigor, mode=mode, soft_dsr=False)
+    # RT2 preconditions (all three, per the safety spec): (a) OOS on, (b) FB4 active (it is, on
+    # every run), (c) the MON1 power canary PROVES the DSR gate vacuous at this run's operating
+    # point. The canary evaluates at the PF4 variance FLOOR, so "vacuous" is proven for every
+    # possible measured V — softening then relocates nothing the hard gate could have confirmed.
+    _soft_dsr, _mon1_evidence = _resolve_soft_dsr(
+        soft_dsr, enable_oos=enable_oos, mode=mode,
+        window_start=eff_ws, window_end=eff_we, max_runs=max_runs)
+    if _mon1_evidence is not None and on_event is not None:
+        on_event("mon1_canary", _mon1_evidence)   # MON3: the banner's data source
+    gatekeeper = ResearchGatekeeper(rigor=rigor, mode=mode, soft_dsr=_soft_dsr)
     critic = AdversarialCritic(
         llm=(llm if agent_mode in ("ai_assisted", "full_ai") else None),
         ledger=ledger,

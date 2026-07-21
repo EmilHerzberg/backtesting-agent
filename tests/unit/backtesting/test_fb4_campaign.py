@@ -88,12 +88,59 @@ def test_campaign_ledger_persists_across_service_instances(tmp_path):
 
 
 @pytest.mark.finding("RT2")
-async def test_soft_dsr_request_is_refused_until_mon1_exists():
-    # Sequencing guard (review fix): the advisory stage-1 may not activate before the MON1
-    # power canary exists and proves vacuity — a request fails loudly, never silently ignored.
-    from src.backend.ai.research.run import run_research
-    with pytest.raises(ValueError, match="sequencing-blocked"):
-        await run_research(goal="g", assets=["AAPL"], soft_dsr=True)
+def test_soft_dsr_activation_is_mon1_conditioned():
+    # Track 6: the advisory stage-1 activates ONLY when the MON1 canary proves the DSR gate
+    # vacuous at the run's operating point (evaluated at the PF4 variance floor = airtight).
+    from src.backend.ai.research.run import _resolve_soft_dsr
+
+    # not requested → inert, no canary run
+    assert _resolve_soft_dsr(False, enable_oos=True, mode="robustness",
+                             window_start="2015-01-01", window_end="2023-12-31",
+                             max_runs=20) == (False, None)
+    # mode/OOS preconditions still refuse loudly
+    with pytest.raises(ValueError, match="robustness"):
+        _resolve_soft_dsr(True, enable_oos=True, mode="regime",
+                          window_start="2015-01-01", window_end="2023-12-31", max_runs=20)
+    with pytest.raises(ValueError, match="robustness"):
+        _resolve_soft_dsr(True, enable_oos=False, mode="robustness",
+                          window_start="2015-01-01", window_end="2023-12-31", max_runs=20)
+    # typical research window: PF1 showed zero power in the reference band → canary proves
+    # vacuity → soft_dsr ACTIVATES, with the evidence returned for the report/banner
+    active, evidence = _resolve_soft_dsr(True, enable_oos=True, mode="robustness",
+                                         window_start="2015-01-01",
+                                         window_end="2023-12-31", max_runs=20)
+    assert active is True
+    assert evidence["vacuous"] is True and evidence["canary_healthy"] is True
+    assert evidence["power_at_reference"] < evidence["power_floor"]
+
+
+@pytest.mark.finding("MON1")
+def test_canary_refuses_softening_where_the_gate_has_real_power():
+    # A huge-T, tiny-N operating point: the gate genuinely CAN confirm a 1.0 edge there —
+    # the canary must say NOT vacuous, and the guard must refuse to discard a working filter.
+    from src.backend.ai.research.run import _resolve_soft_dsr
+    from src.backend.backtesting.gates.power_canary import gate_vacuity_canary
+
+    ev = gate_vacuity_canary(t_bars=50_000, n_trials=2)
+    assert ev["canary_healthy"] is True and ev["vacuous"] is False
+    with pytest.raises(ValueError, match="REAL power"):
+        _resolve_soft_dsr(True, enable_oos=True, mode="robustness",
+                          window_start="1826-01-01", window_end="2023-12-31", max_runs=2)
+
+
+@pytest.mark.finding("MON2")
+def test_gate_details_carry_the_lever_decomposition():
+    import numpy as np
+
+    from src.backend.backtesting.gates.deflated_sharpe import DeflatedSharpeGate
+    from src.backend.backtesting.gates.pipeline import GateContext
+    rng = np.random.default_rng(42)
+    ctx = GateContext(metrics={"exposure_time": 1.0}, trades=[],
+                      returns=rng.standard_normal(500) * 0.01, equity_curve=[],
+                      n_trials_global=50, trial_sr_variance=0.01)
+    d = DeflatedSharpeGate().check(ctx).details
+    assert d["binding_lever"] == "V_measured"
+    assert d["sr0_annual"] > 0 and d["min_pass_sharpe_annual"] > d["sr0_annual"]
 
 
 @pytest.mark.finding("FB4")

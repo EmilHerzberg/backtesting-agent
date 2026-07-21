@@ -180,6 +180,15 @@ async def persist_snapshot(rec: Any) -> None:
 
                 # OOS outcomes arrive after a candidate is created — map by hash.
                 oos_map = {o.strategy_hash: o.outcome for o in st.oos_results}
+                # D2 (review fix): the buy-and-hold comparison must SURVIVE a restart — folded
+                # into artifacts_json (no schema change), surfaced by load_candidate_detail.
+                oos_extras_map = {
+                    o.strategy_hash: {
+                        "excess_sharpe": getattr(o, "excess_sharpe", None),
+                        "excess_total_return_net": getattr(o, "excess_total_return_net", None),
+                    }
+                    for o in st.oos_results
+                }
                 while p_candidates < len(st.candidates):
                     c = st.candidates[p_candidates]
                     session.add(
@@ -200,6 +209,7 @@ async def persist_snapshot(rec: Any) -> None:
                                 "regime_analysis": c.regime_analysis,
                                 "benchmark": c.benchmark,
                                 "equity_curve": c.equity_curve,
+                                "oos_extras": oos_extras_map.get(c.strategy_hash, {}),
                             }),
                             oos_outcome=oos_map.get(c.strategy_hash, "PENDING"),
                             lineage_id=getattr(c, "lineage_id", "") or run.current_lineage,  # M47: creation-time lineage
@@ -428,6 +438,12 @@ async def load_candidate_detail(
             "artifacts": _loads(row.artifacts_json or "{}"),
             "oos_outcome": row.oos_outcome,
             "lineage_id": row.lineage_id,
+            # D2: the persisted buy-and-hold comparison (empty {} on pre-D2 rows → keys absent
+            # → the frontend chip simply stays hidden for old runs)
+            "oos_excess_sharpe": (_loads(row.artifacts_json or "{}")
+                                  .get("oos_extras", {}) or {}).get("excess_sharpe"),
+            "oos_excess_total_return_net": (_loads(row.artifacts_json or "{}")
+                                            .get("oos_extras", {}) or {}).get("excess_total_return_net"),
         }
 
 

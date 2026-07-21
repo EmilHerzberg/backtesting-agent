@@ -52,6 +52,16 @@ export default function AgentConsolePage({
         <>
           <BudgetHUD state={state} />
           {state && <RunStatusBanner state={state} />}
+          {/* MON3: the power-canary banner — the in-sample gate is proven power-limited here,
+              so validation weight sits on the fresh-data judge (advisory stage-1 active). */}
+          {events.some((e) => e.raw_kind === "mon1_canary" &&
+                              (e.detail as { vacuous?: boolean } | undefined)?.vacuous) && (
+            <div className="bg-amber-950/40 border-b border-amber-900 px-4 py-2 text-[12px] text-amber-300">
+              Power canary: the in-sample significance gate cannot confirm a genuine reference-strength
+              edge at this run&apos;s settings — stage 1 runs advisory (&quot;could be luck&quot; warnings), and
+              the budget-capped fresh-data judge carries the validation weight.
+            </div>
+          )}
           <div className="grid grid-cols-[280px_1fr_300px] flex-1 min-h-0">
             <PipelineRail state={state} hypothesis={hypothesis} />
             <ActivityStream events={events} goalId={goalId} />

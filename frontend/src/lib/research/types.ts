@@ -104,6 +104,10 @@ export interface OOSVerdict {
   outcome: string; // PASS | FAIL | PENDING
   lineage_id: string;
   evaluated_at: string;
+  // D2: the buy-and-hold comparison — excess Sharpe gates the PASS; the fee-net total-return
+  // delta answers "would simply holding (fees included) have made more money?"
+  excess_sharpe?: number | null;
+  excess_total_return_net?: number | null;
 }
 
 export interface RegimeSegment {

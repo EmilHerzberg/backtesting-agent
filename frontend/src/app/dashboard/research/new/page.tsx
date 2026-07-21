@@ -81,6 +81,14 @@ export default function NewRunPage() {
   const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1_000_000_000));
   // v1: cross-run coverage memory — successive runs dig UNVISITED parameter regions (robustness mode only).
   const [coverageMemory, setCoverageMemory] = useState(false);
+  // coverage-v2: size the significance hurdle to the CAMPAIGN's visited count (needs coverage memory).
+  const [coverageDsr, setCoverageDsr] = useState(false);
+  // RT2: advisory stage-1 — server-guarded (activates only when the MON1 canary proves the gate vacuous).
+  const [softDsr, setSoftDsr] = useState(false);
+  // D1: validation quality floor (OOS observed Sharpe), band 0.5–1.0. UNTOUCHED → send null so
+  // the server's single frozen default governs (the tamper-wire's None-defer contract).
+  const [oosMinSharpe, setOosMinSharpe] = useState(0.9);
+  const [oosMinSharpeTouched, setOosMinSharpeTouched] = useState(false);
 
   const [showKeyGate, setShowKeyGate] = useState(false);  // F-3: AI mode without a key
   const [stage, setStage] = useState<"config" | "preview">("config");
@@ -195,6 +203,9 @@ export default function NewRunPage() {
           window_start: mode === "regime" ? windowStart : null,
           window_end: mode === "regime" ? windowEnd : null,
           coverage_memory: mode === "robustness" ? coverageMemory : false,
+          coverage_dsr: mode === "robustness" ? coverageMemory && coverageDsr : false,
+          soft_dsr: mode === "robustness" ? softDsr : false,
+          oos_min_sharpe: oosMinSharpeTouched ? oosMinSharpe : null,
         }),
       });
       router.push(`/dashboard/research/runs/${created.goal_id}`);
@@ -589,6 +600,51 @@ export default function NewRunPage() {
                   </span>
                 </label>
               )}
+              {mode === "robustness" && (
+                <label className={`flex items-start gap-2 text-xs cursor-pointer ${coverageMemory ? "text-gray-400" : "text-gray-600"}`}>
+                  <input
+                    type="checkbox"
+                    checked={coverageMemory && coverageDsr}
+                    disabled={!coverageMemory}
+                    onChange={(e) => setCoverageDsr(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className={coverageMemory ? "text-gray-300" : "text-gray-500"}>Campaign honesty correction</span> — size
+                    the significance hurdle to everything your campaign has searched <em>across all runs</em>, not just this
+                    one (can only make the bar stricter). Needs coverage memory.
+                  </span>
+                </label>
+              )}
+              {mode === "robustness" && (
+                <label className="flex items-start gap-2 text-xs text-gray-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={softDsr}
+                    onChange={(e) => setSoftDsr(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="text-gray-300">Advisory stage-1</span> — instead of executing candidates that fail the
+                    in-sample luck test, mark them with a &quot;could be luck&quot; warning and let the fresh-data judge
+                    (budget-capped, family-error-controlled) decide. The server activates this <em>only</em> when its power
+                    canary proves the in-sample gate couldn&apos;t confirm a genuine edge here anyway.
+                  </span>
+                </label>
+              )}
+              <label className="flex items-start gap-2 text-xs text-gray-400">
+                <span className="mt-0.5 whitespace-nowrap text-gray-300">Quality floor</span>
+                <input
+                  type="range" min={0.5} max={1.0} step={0.05}
+                  value={oosMinSharpe}
+                  onChange={(e) => { setOosMinSharpe(parseFloat(e.target.value)); setOosMinSharpeTouched(true); }}
+                  className="flex-1 mt-1"
+                />
+                <span className="mt-0.5 font-mono text-gray-300 w-8">{oosMinSharpe.toFixed(2)}</span>
+                <span className="mt-0.5 text-[11px] text-gray-500">
+                  min. fresh-data Sharpe to count as validated (noise-aware: below-but-unclear = retry, never killed)
+                </span>
+              </label>
               <div>
                 <div className="text-[11px] uppercase font-semibold text-gray-500 mb-1">Templates (optional)</div>
                 <div className="flex flex-wrap gap-1.5">
