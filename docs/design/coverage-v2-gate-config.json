@@ -21,7 +21,7 @@
    "campaign_oos_budget": 50,
    "campaign_alpha_family": 0.05,
    "adjustment": "FIXED budget-sized Sidak: EVERY test faces t* = norm.ppf(1-(1-(1-alpha)^(1/BUDGET))) ~ 3.083 — review fix: the sequential (m=spent+1) scheme measured FWER 20.6% at the budget (4x target); the fixed bar holds family-wise false-PASS <= alpha exactly and is order-free (no within-run ordering games). Verified by a Monte-Carlo acceptance test.",
-   "scope": "per user (matches the coverage scope); the SERVER path uses the persistent oos_lockbox.db so the ledger accumulates across runs (review fix: the library ':memory:' default is honestly labeled within-run-only)",
+   "scope": "per user (matches the coverage scope); the SERVER path uses the persistent data/oos_lockbox.db — under the container's persisted VOLUME, so the ledger survives redeploys too (review fix: the library ':memory:' default is honestly labeled within-run-only)",
    "depletion_semantics": "campaign budget exhausted -> BudgetExhaustedError -> candidate stays honest-absent (UNEVALUATED path); volume can never buy more hold-out lottery tickets",
    "default": "ACTIVE on every research run"
   },
